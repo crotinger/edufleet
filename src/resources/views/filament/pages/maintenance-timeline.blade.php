@@ -3,13 +3,102 @@
         $vehicle = $this->getSelectedVehicle();
         $options = $this->getVehicleOptions();
         $timeline = $this->getTimeline();
+        $fmt = fn ($n) => number_format((int) $n);
+
         $urgencyStyle = [
-            'overdue'  => ['bg' => 'bg-danger-50 dark:bg-danger-500/10', 'border' => 'border-danger-500/30', 'text' => 'text-danger-700 dark:text-danger-300', 'dot' => 'bg-danger-500'],
-            'soon'     => ['bg' => 'bg-warning-50 dark:bg-warning-500/10', 'border' => 'border-warning-500/30', 'text' => 'text-warning-700 dark:text-warning-300', 'dot' => 'bg-warning-500'],
-            'upcoming' => ['bg' => 'bg-info-50 dark:bg-info-500/10', 'border' => 'border-info-500/30', 'text' => 'text-info-700 dark:text-info-300', 'dot' => 'bg-info-500'],
-            'ok'       => ['bg' => 'bg-success-50 dark:bg-success-500/10', 'border' => 'border-success-500/30', 'text' => 'text-success-700 dark:text-success-300', 'dot' => 'bg-success-500'],
+            'overdue'  => ['bg' => 'bg-danger-50 dark:bg-danger-500/15',   'text' => 'text-danger-700 dark:text-danger-300',   'dot' => 'bg-danger-500',  'rank' => 0],
+            'soon'     => ['bg' => 'bg-warning-50 dark:bg-warning-500/15', 'text' => 'text-warning-700 dark:text-warning-300', 'dot' => 'bg-warning-500', 'rank' => 1],
+            'upcoming' => ['bg' => 'bg-info-50 dark:bg-info-500/15',       'text' => 'text-info-700 dark:text-info-300',       'dot' => 'bg-info-500',    'rank' => 2],
+            'ok'       => ['bg' => 'bg-success-50 dark:bg-success-500/15', 'text' => 'text-success-700 dark:text-success-300', 'dot' => 'bg-success-500', 'rank' => 3],
         ];
     @endphp
+
+    <style>
+        .mt-table { border-collapse: collapse; width: 100%; }
+        .mt-table th { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: rgb(107 114 128); padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid rgb(229 231 235); }
+        .dark .mt-table th { color: rgb(156 163 175); border-bottom-color: rgb(55 65 81); }
+        .mt-table td { padding: 0.625rem 0.75rem; border-bottom: 1px solid rgb(243 244 246); font-variant-numeric: tabular-nums; vertical-align: top; }
+        .dark .mt-table td { border-bottom-color: rgb(31 41 55); }
+        .mt-table tbody tr:hover { background: rgb(249 250 251); }
+        .dark .mt-table tbody tr:hover { background: rgb(31 41 55 / 0.4); }
+        .mt-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .mt-muted { color: rgb(107 114 128); }
+        .dark .mt-muted { color: rgb(156 163 175); }
+        .mt-sort-th { cursor: pointer; user-select: none; position: relative; padding-right: 1.25rem; transition: color 0.15s; }
+        .mt-sort-th:hover { color: rgb(55 65 81); }
+        .dark .mt-sort-th:hover { color: rgb(229 231 235); }
+        .mt-sort-th[data-active="true"] { color: rgb(37 99 235); }
+        .dark .mt-sort-th[data-active="true"] { color: rgb(96 165 250); }
+        .mt-sort-indicator::after {
+            content: '';
+            position: absolute;
+            right: 0.25rem;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0; height: 0;
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-bottom: 4px solid currentColor;
+            opacity: 0.3;
+            margin-top: -3px;
+        }
+        .mt-sort-indicator[data-active="true"]::after { opacity: 1; }
+        .mt-sort-indicator[data-dir="desc"]::after {
+            border-bottom: none;
+            border-top: 4px solid currentColor;
+            margin-top: 3px;
+        }
+        .mt-badge { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.125rem 0.5rem; font-size: 0.75rem; font-weight: 600; border-radius: 0.375rem; }
+        .mt-dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 9999px; }
+    </style>
+
+    <script>
+        window.mtInitSort = function (tableId, defaultKey, defaultDir) {
+            const table = document.getElementById(tableId);
+            if (!table) return;
+            let sortKey = defaultKey, sortDir = defaultDir || 'asc';
+            const tbody = table.querySelector('tbody');
+            const headers = table.querySelectorAll('th[data-sort-key]');
+
+            const apply = () => {
+                headers.forEach(h => {
+                    const isActive = h.dataset.sortKey === sortKey;
+                    h.dataset.active = isActive ? 'true' : 'false';
+                    h.dataset.dir = isActive ? sortDir : '';
+                });
+                const rows = Array.from(tbody.querySelectorAll('tr'));
+                rows.sort((a, b) => {
+                    const prop = 'sort' + sortKey[0].toUpperCase() + sortKey.slice(1);
+                    const av = a.dataset[prop] ?? '';
+                    const bv = b.dataset[prop] ?? '';
+                    const an = parseFloat(av), bn = parseFloat(bv);
+                    let cmp;
+                    if (!isNaN(an) && !isNaN(bn) && av !== '' && bv !== '') cmp = an - bn;
+                    else cmp = String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+                    return sortDir === 'desc' ? -cmp : cmp;
+                });
+                rows.forEach(r => tbody.appendChild(r));
+            };
+
+            headers.forEach(h => {
+                h.addEventListener('click', () => {
+                    const key = h.dataset.sortKey;
+                    if (sortKey === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+                    else { sortKey = key; sortDir = h.dataset.sortDefault || 'asc'; }
+                    apply();
+                });
+            });
+            apply();
+        };
+        document.addEventListener('DOMContentLoaded', () => {
+            mtInitSort('mt-future-table', 'urgencyRank', 'asc');
+            mtInitSort('mt-past-table', 'date', 'desc');
+        });
+        document.addEventListener('livewire:navigated', () => {
+            mtInitSort('mt-future-table', 'urgencyRank', 'asc');
+            mtInitSort('mt-past-table', 'date', 'desc');
+        });
+    </script>
 
     <div class="flex flex-wrap items-end gap-3">
         <div class="flex-1 min-w-64">
@@ -53,101 +142,136 @@
             </x-slot>
         </x-filament::section>
 
-        {{-- Upcoming / projected from schedule --}}
+        {{-- Projected schedule — sortable sheet --}}
         @if ($timeline['future']->isNotEmpty())
             <x-filament::section>
                 <x-slot name="heading">Projected — next due</x-slot>
-                <x-slot name="description">Based on the configured schedule + the most recent service of each type.</x-slot>
-                <div class="grid gap-3 md:grid-cols-2">
-                    @foreach ($timeline['future'] as $row)
-                        @php $style = $urgencyStyle[$row->urgency]; @endphp
-                        <div class="rounded-lg border {{ $style['border'] }} {{ $style['bg'] }} p-4">
-                            <div class="flex items-start justify-between gap-3">
-                                <div>
-                                    <div class="font-semibold">{{ $row->service_label }}</div>
-                                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ $row->interval }}</div>
-                                </div>
-                                <span class="inline-flex items-center gap-1.5 text-xs font-semibold {{ $style['text'] }} uppercase tracking-wider">
-                                    <span class="inline-block h-2 w-2 rounded-full {{ $style['dot'] }}"></span>
-                                    {{ $row->urgency }}
-                                </span>
-                            </div>
+                <x-slot name="description">Click any column header to sort. Default: urgency (overdue first). Based on the configured schedule + the most recent service of each type.</x-slot>
 
-                            @if ($row->last_record)
+                <div class="overflow-x-auto">
+                    <table class="mt-table" id="mt-future-table">
+                        <thead>
+                            <tr>
+                                <th class="mt-sort-th mt-sort-indicator" data-sort-key="service" data-sort-default="asc">Service</th>
+                                <th class="mt-sort-th mt-sort-indicator" data-sort-key="cadence" data-sort-default="asc">Cadence</th>
+                                <th class="mt-sort-th mt-sort-indicator" data-sort-key="last" data-sort-default="desc">Last performed</th>
+                                <th class="mt-sort-th mt-sort-indicator" data-sort-key="nextDate" data-sort-default="asc">Next due date</th>
+                                <th class="mt-sort-th mt-sort-indicator mt-num" data-sort-key="nextMiles" data-sort-default="asc">Next due mi</th>
+                                <th class="mt-sort-th mt-sort-indicator mt-num" data-sort-key="daysLeft" data-sort-default="asc">Days left</th>
+                                <th class="mt-sort-th mt-sort-indicator mt-num" data-sort-key="milesLeft" data-sort-default="asc">Miles left</th>
+                                <th class="mt-sort-th mt-sort-indicator" data-sort-key="urgencyRank" data-sort-default="asc">Urgency</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($timeline['future'] as $row)
                                 @php
-                                    $nextDueParts = [];
-                                    if ($row->next_due_on) {
-                                        $nextDueParts[] = $row->next_due_on->format('M j, Y');
-                                    }
-                                    if ($row->next_due_miles !== null) {
-                                        $nextDueParts[] = number_format($row->next_due_miles) . ' mi';
-                                    }
-
-                                    $remainingParts = [];
-                                    if ($row->days_remaining !== null) {
-                                        $d = $row->days_remaining;
-                                        $remainingParts[] = $d < 0
-                                            ? abs($d) . ' days overdue'
-                                            : 'in ' . $d . ' day' . ($d === 1 ? '' : 's');
-                                    }
-                                    if ($row->miles_remaining !== null) {
-                                        $m = $row->miles_remaining;
-                                        $remainingParts[] = $m < 0
-                                            ? number_format(abs($m)) . ' mi overdue'
-                                            : number_format($m) . ' mi to go';
-                                    }
+                                    $style = $urgencyStyle[$row->urgency];
+                                    $hasHistory = (bool) $row->last_record;
+                                    $lastStr = $hasHistory
+                                        ? $row->last_record->performed_on->format('M j, Y')
+                                            . ($row->last_record->odometer_at_service !== null ? ' @ ' . $fmt($row->last_record->odometer_at_service) . ' mi' : '')
+                                        : '—';
+                                    $nextDateStr = $row->next_due_on ? $row->next_due_on->format('M j, Y') : '—';
+                                    $nextMilesStr = $row->next_due_miles !== null ? $fmt($row->next_due_miles) : '—';
+                                    $daysLeftStr = $row->days_remaining !== null
+                                        ? ($row->days_remaining < 0 ? '-' . abs($row->days_remaining) : $row->days_remaining)
+                                        : '—';
+                                    $milesLeftStr = $row->miles_remaining !== null
+                                        ? ($row->miles_remaining < 0 ? '-' . $fmt(abs($row->miles_remaining)) : $fmt($row->miles_remaining))
+                                        : '—';
                                 @endphp
-                                <div class="mt-3 pt-3 border-t {{ $style['border'] }} text-sm">
-                                    <div><strong>Next due:</strong> {{ implode(' · ', $nextDueParts) ?: '—' }}</div>
-                                    <div class="text-xs mt-1 {{ $style['text'] }}">{{ implode(' · ', $remainingParts) }}</div>
-                                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                                        Last: {{ $row->last_record->performed_on->format('M j, Y') }}
-                                        @if ($row->last_record->odometer_at_service !== null)
-                                            · {{ number_format($row->last_record->odometer_at_service) }} mi
+                                <tr
+                                    data-sort-service="{{ $row->service_label }}"
+                                    data-sort-cadence="{{ $row->interval }}"
+                                    data-sort-last="{{ $hasHistory ? $row->last_record->performed_on->timestamp : 0 }}"
+                                    data-sort-next-date="{{ $row->next_due_on ? $row->next_due_on->timestamp : 99999999999 }}"
+                                    data-sort-next-miles="{{ $row->next_due_miles ?? 99999999999 }}"
+                                    data-sort-days-left="{{ $row->days_remaining ?? 99999999 }}"
+                                    data-sort-miles-left="{{ $row->miles_remaining ?? 99999999 }}"
+                                    data-sort-urgency-rank="{{ $style['rank'] }}"
+                                >
+                                    <td><strong>{{ $row->service_label }}</strong></td>
+                                    <td class="mt-muted">{{ $row->interval }}</td>
+                                    <td class="{{ $hasHistory ? '' : 'mt-muted italic' }}">
+                                        @if ($hasHistory)
+                                            {{ $row->last_record->performed_on->format('M j, Y') }}
+                                            @if ($row->last_record->odometer_at_service !== null)
+                                                <div class="mt-muted text-xs">@ {{ $fmt($row->last_record->odometer_at_service) }} mi</div>
+                                            @endif
+                                        @else
+                                            no history yet
                                         @endif
-                                    </div>
-                                </div>
-                            @else
-                                <div class="mt-3 pt-3 border-t {{ $style['border'] }} text-xs text-gray-500 dark:text-gray-400 italic">
-                                    No history for this service yet — log the first one and the projection will appear here.
-                                </div>
-                            @endif
-                        </div>
-                    @endforeach
+                                    </td>
+                                    <td>{{ $nextDateStr }}</td>
+                                    <td class="mt-num">{{ $nextMilesStr }}</td>
+                                    <td class="mt-num {{ $row->days_remaining !== null && $row->days_remaining < 0 ? 'text-danger-600 font-semibold' : '' }}">
+                                        {{ $daysLeftStr }}
+                                    </td>
+                                    <td class="mt-num {{ $row->miles_remaining !== null && $row->miles_remaining < 0 ? 'text-danger-600 font-semibold' : '' }}">
+                                        {{ $milesLeftStr }}
+                                    </td>
+                                    <td>
+                                        <span class="mt-badge {{ $style['bg'] }} {{ $style['text'] }}">
+                                            <span class="mt-dot {{ $style['dot'] }}"></span>
+                                            {{ $row->urgency }}
+                                        </span>
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
                 </div>
             </x-filament::section>
         @endif
 
-        {{-- Past service history --}}
+        {{-- Past service history — sortable sheet --}}
         <x-filament::section collapsible>
             <x-slot name="heading">Service history ({{ $timeline['past']->count() }} most recent)</x-slot>
-            <x-slot name="description">Chronological log of completed maintenance work.</x-slot>
+            <x-slot name="description">Click any column header to sort. Default: most recent first.</x-slot>
+
             @if ($timeline['past']->isEmpty())
                 <div class="text-center text-gray-500 py-6">No maintenance records for this vehicle yet.</div>
             @else
-                <ol class="relative border-l border-gray-200 dark:border-white/10 ml-2 space-y-4">
-                    @foreach ($timeline['past'] as $rec)
-                        <li class="ml-4">
-                            <span class="absolute -left-1.5 mt-1 h-3 w-3 rounded-full bg-primary-500 border-2 border-white dark:border-gray-900"></span>
-                            <div class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-                                <span class="font-semibold">{{ \App\Models\MaintenanceRecord::serviceTypes()[$rec->service_type] ?? $rec->service_type }}</span>
-                                <span class="text-sm text-gray-600 dark:text-gray-400">{{ $rec->performed_on->format('M j, Y') }}</span>
-                                @if ($rec->odometer_at_service !== null)
-                                    <span class="text-xs text-gray-500 font-mono">@ {{ number_format($rec->odometer_at_service) }} mi</span>
-                                @endif
-                                @if ($rec->cost_cents)
-                                    <span class="text-xs text-gray-500">${{ number_format($rec->cost_cents / 100, 2) }}</span>
-                                @endif
-                            </div>
-                            @if ($rec->performed_by)
-                                <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">by {{ $rec->performed_by }}</div>
-                            @endif
-                            @if ($rec->notes)
-                                <div class="text-xs text-gray-600 dark:text-gray-400 mt-1 italic">{{ $rec->notes }}</div>
-                            @endif
-                        </li>
-                    @endforeach
-                </ol>
+                <div class="overflow-x-auto">
+                    <table class="mt-table" id="mt-past-table">
+                        <thead>
+                            <tr>
+                                <th class="mt-sort-th mt-sort-indicator" data-sort-key="date" data-sort-default="desc">Date</th>
+                                <th class="mt-sort-th mt-sort-indicator" data-sort-key="service" data-sort-default="asc">Service</th>
+                                <th class="mt-sort-th mt-sort-indicator mt-num" data-sort-key="odometer" data-sort-default="desc">Odometer</th>
+                                <th class="mt-sort-th mt-sort-indicator mt-num" data-sort-key="cost" data-sort-default="desc">Cost</th>
+                                <th class="mt-sort-th mt-sort-indicator" data-sort-key="performedBy" data-sort-default="asc">Performed by</th>
+                                <th>Notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach ($timeline['past'] as $rec)
+                                <tr
+                                    data-sort-date="{{ $rec->performed_on->timestamp }}"
+                                    data-sort-service="{{ \App\Models\MaintenanceRecord::serviceTypes()[$rec->service_type] ?? $rec->service_type }}"
+                                    data-sort-odometer="{{ $rec->odometer_at_service ?? 0 }}"
+                                    data-sort-cost="{{ $rec->cost_cents ?? 0 }}"
+                                    data-sort-performed-by="{{ $rec->performed_by ?? '' }}"
+                                >
+                                    <td>{{ $rec->performed_on->format('M j, Y') }}</td>
+                                    <td><strong>{{ \App\Models\MaintenanceRecord::serviceTypes()[$rec->service_type] ?? $rec->service_type }}</strong></td>
+                                    <td class="mt-num">
+                                        {{ $rec->odometer_at_service !== null ? $fmt($rec->odometer_at_service) . ' mi' : '—' }}
+                                    </td>
+                                    <td class="mt-num">
+                                        {{ $rec->cost_cents ? '$' . number_format($rec->cost_cents / 100, 2) : '—' }}
+                                    </td>
+                                    <td class="{{ $rec->performed_by ? '' : 'mt-muted' }}">
+                                        {{ $rec->performed_by ?: '—' }}
+                                    </td>
+                                    <td class="mt-muted text-xs" style="max-width: 24rem;">
+                                        {{ $rec->notes ?: '' }}
+                                    </td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
             @endif
         </x-filament::section>
     @endif
