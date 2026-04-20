@@ -74,28 +74,32 @@
                             </div>
 
                             @if ($row->last_record)
+                                @php
+                                    $nextDueParts = [];
+                                    if ($row->next_due_on) {
+                                        $nextDueParts[] = $row->next_due_on->format('M j, Y');
+                                    }
+                                    if ($row->next_due_miles !== null) {
+                                        $nextDueParts[] = number_format($row->next_due_miles) . ' mi';
+                                    }
+
+                                    $remainingParts = [];
+                                    if ($row->days_remaining !== null) {
+                                        $d = $row->days_remaining;
+                                        $remainingParts[] = $d < 0
+                                            ? abs($d) . ' days overdue'
+                                            : 'in ' . $d . ' day' . ($d === 1 ? '' : 's');
+                                    }
+                                    if ($row->miles_remaining !== null) {
+                                        $m = $row->miles_remaining;
+                                        $remainingParts[] = $m < 0
+                                            ? number_format(abs($m)) . ' mi overdue'
+                                            : number_format($m) . ' mi to go';
+                                    }
+                                @endphp
                                 <div class="mt-3 pt-3 border-t {{ $style['border'] }} text-sm">
-                                    <div><strong>Next due:</strong>
-                                        @if ($row->next_due_on) {{ $row->next_due_on->format('M j, Y') }}@endif
-                                        @if ($row->next_due_miles !== null) @if ($row->next_due_on) · @endif{{ number_format($row->next_due_miles) }} mi@endif
-                                    </div>
-                                    <div class="text-xs mt-1 {{ $style['text'] }}">
-                                        @if ($row->days_remaining !== null)
-                                            @if ($row->days_remaining < 0)
-                                                {{ abs($row->days_remaining) }} days overdue
-                                            @else
-                                                in {{ $row->days_remaining }} day{{ $row->days_remaining === 1 ? '' : 's' }}
-                                            @endif
-                                        @endif
-                                        @if ($row->miles_remaining !== null)
-                                            @if ($row->days_remaining !== null) · @endif
-                                            @if ($row->miles_remaining < 0)
-                                                {{ number_format(abs($row->miles_remaining)) }} mi overdue
-                                            @else
-                                                {{ number_format($row->miles_remaining) }} mi to go
-                                            @endif
-                                        @endif
-                                    </div>
+                                    <div><strong>Next due:</strong> {{ implode(' · ', $nextDueParts) ?: '—' }}</div>
+                                    <div class="text-xs mt-1 {{ $style['text'] }}">{{ implode(' · ', $remainingParts) }}</div>
                                     <div class="text-xs text-gray-500 dark:text-gray-400 mt-2">
                                         Last: {{ $row->last_record->performed_on->format('M j, Y') }}
                                         @if ($row->last_record->odometer_at_service !== null)
