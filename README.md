@@ -22,8 +22,6 @@ Primary goals:
 | Audit log | `spatie/laravel-activitylog` |
 | QR codes | `bacon/bacon-qr-code` |
 
-Target deploy: a Proxmox VM (or any small cloud VM) behind Nginx Proxy Manager (or any TLS-terminating reverse proxy). Everything runs as three containers from a single `compose.yaml` — portable between environments.
-
 ## Features
 
 - **Vehicles, Drivers, Routes** — full CRUD with relation managers and expiration tracking (CDL, DOT medical, inspections, registrations)

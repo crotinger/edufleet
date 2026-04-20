@@ -254,10 +254,41 @@ class TripRequestsTable
                     return "\"{$c->purpose}\" {$startStr} – {$endStr} [{$c->status}]";
                 })->implode('; ');
                 $more = $conflicts->count() > 3 ? " · +" . ($conflicts->count() - 3) . " more" : '';
-                $issues[] = "Scheduling conflict: Unit {$vehicle->unit_number} has "
+                $issues[] = "Reservation conflict: Unit {$vehicle->unit_number} has "
                     . $conflicts->count() . " overlapping reservation"
                     . ($conflicts->count() === 1 ? '' : 's')
                     . " — {$summary}{$more}";
+            }
+
+            // Also check standalone Trip records (no reservation_id) — these come
+            // from admin-created trips or self-service quicktrips that bypass the
+            // reservation conflict check above. An in-progress trip (ended_at null)
+            // counts as occupying the vehicle indefinitely.
+            $conflictingTrips = \App\Models\Trip::query()
+                ->where('vehicle_id', $vehicleId)
+                ->whereNull('reservation_id')
+                ->whereIn('status', [
+                    \App\Models\Trip::STATUS_APPROVED,
+                    \App\Models\Trip::STATUS_PENDING,
+                ])
+                ->where('started_at', '<', $end)
+                ->where(function ($q) use ($start) {
+                    $q->whereNull('ended_at')->orWhere('ended_at', '>', $start);
+                })
+                ->orderBy('started_at')
+                ->get();
+
+            if ($conflictingTrips->isNotEmpty()) {
+                $summary = $conflictingTrips->take(3)->map(function ($t) {
+                    $startStr = $t->started_at?->format('M j g:i a') ?? '?';
+                    $endStr = $t->ended_at?->format('g:i a') ?? 'in progress';
+                    return "\"{$t->purpose}\" {$startStr} – {$endStr}";
+                })->implode('; ');
+                $more = $conflictingTrips->count() > 3 ? " · +" . ($conflictingTrips->count() - 3) . " more" : '';
+                $issues[] = "Trip conflict: Unit {$vehicle->unit_number} has "
+                    . $conflictingTrips->count() . " overlapping trip"
+                    . ($conflictingTrips->count() === 1 ? '' : 's')
+                    . " logged directly (no reservation) — {$summary}{$more}";
             }
         }
 
