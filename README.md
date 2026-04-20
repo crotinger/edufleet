@@ -217,4 +217,4 @@ When a Trip saves with a new `end_odometer` higher than the linked Vehicle's cur
 
 ## License
 
-TBD — choose one (MIT? Proprietary? AGPL?) and update this section before publishing.
+[MIT](LICENSE) — Copyright (c) 2026 Jason Crotinger.
