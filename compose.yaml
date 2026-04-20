@@ -1,0 +1,60 @@
+name: edufleet
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    container_name: edufleet-app
+    restart: unless-stopped
+    ports:
+      - "${APP_HTTP_PORT:-8080}:80"
+      - "${APP_HTTPS_PORT:-8443}:443"
+    environment:
+      SERVER_NAME: ${SERVER_NAME:-:80}
+    volumes:
+      - ./src:/app
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks: [edufleet]
+
+  db:
+    image: postgres:16-alpine
+    container_name: edufleet-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-edufleet}
+      POSTGRES_USER: ${POSTGRES_USER:-edufleet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-edufleet}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [edufleet]
+
+  redis:
+    image: redis:7-alpine
+    container_name: edufleet-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks: [edufleet]
+
+volumes:
+  db_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edufleet:
