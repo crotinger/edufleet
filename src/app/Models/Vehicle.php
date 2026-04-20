@@ -102,6 +102,11 @@ class Vehicle extends Model
         return $this->hasMany(MaintenanceRecord::class);
     }
 
+    public function maintenanceSchedules(): HasMany
+    {
+        return $this->hasMany(MaintenanceSchedule::class);
+    }
+
     public function reservations(): HasMany
     {
         return $this->hasMany(TripReservation::class);

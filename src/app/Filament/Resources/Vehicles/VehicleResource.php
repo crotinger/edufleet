@@ -8,6 +8,7 @@ use App\Filament\Resources\Vehicles\Pages\EditVehicle;
 use App\Filament\Resources\Vehicles\Pages\ListVehicles;
 use App\Filament\Resources\Vehicles\RelationManagers\InspectionsRelationManager;
 use App\Filament\Resources\Vehicles\RelationManagers\MaintenanceRecordsRelationManager;
+use App\Filament\Resources\Vehicles\RelationManagers\MaintenanceSchedulesRelationManager;
 use App\Filament\Resources\Vehicles\RelationManagers\RegistrationsRelationManager;
 use App\Filament\Resources\Vehicles\RelationManagers\TripsRelationManager;
 use App\Filament\Resources\Vehicles\Schemas\VehicleForm;
@@ -52,6 +53,7 @@ class VehicleResource extends Resource
     {
         return [
             TripsRelationManager::class,
+            MaintenanceSchedulesRelationManager::class,
             MaintenanceRecordsRelationManager::class,
             InspectionsRelationManager::class,
             RegistrationsRelationManager::class,

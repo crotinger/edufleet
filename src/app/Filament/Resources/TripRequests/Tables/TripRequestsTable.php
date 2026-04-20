@@ -63,7 +63,14 @@ class TripRequestsTable
                     ->toggleable(),
                 TextColumn::make('vehicle.unit_number')
                     ->label('Assigned')
-                    ->placeholder('—'),
+                    ->placeholder('—')
+                    ->description(function (TripReservation $r) {
+                        if (! $r->split_group_id) return null;
+                        $all = $r->allSplitLegs();
+                        if ($all->count() <= 1) return null;
+                        $units = $all->map(fn ($leg) => $leg->vehicle?->unit_number)->filter()->implode(', ');
+                        return 'Split of ' . $all->count() . ': ' . $units;
+                    }),
                 TextColumn::make('status')
                     ->badge()
                     ->formatStateUsing(fn (?string $state) => TripReservation::statuses()[$state] ?? $state)
@@ -89,45 +96,93 @@ class TripRequestsTable
                     ->label('Approve')
                     ->icon('heroicon-o-check-circle')
                     ->color('success')
-                    ->modalHeading('Approve & assign vehicle')
+                    ->modalHeading('Approve & assign vehicle(s)')
                     ->modalDescription(fn (TripReservation $r) => $r->desired_start_at
                         ? 'Requested for ' . $r->desired_start_at->format('M j, Y g:i a')
                             . ($r->expected_return_at ? ' – ' . $r->expected_return_at->format('g:i a') : '')
                             . ' · ' . $r->expected_passengers . ' passengers'
-                        : 'Assign a vehicle and approve.')
+                        : 'Assign one or more vehicles and approve.')
                     ->visible(fn (TripReservation $r) => $r->status === TripReservation::STATUS_REQUESTED
                         && auth()->user()?->can('approve_trip_request'))
                     ->schema([
-                        Select::make('vehicle_id')
-                            ->label('Assign vehicle')
-                            ->relationship('vehicle', 'unit_number')
-                            ->getOptionLabelFromRecordUsing(fn (Vehicle $v) => "{$v->unit_number} · "
-                                . (Vehicle::types()[$v->type] ?? $v->type)
-                                . ($v->capacity_passengers ? " · seats {$v->capacity_passengers}" : ''))
+                        Select::make('vehicle_ids')
+                            ->label('Assign vehicle(s)')
+                            ->helperText('Pick one vehicle for a normal approval, or multiple to split a large group across several vehicles. Each selected vehicle gets its own reservation; all are linked as a split group.')
+                            ->multiple()
+                            ->options(fn () => Vehicle::query()
+                                ->where('status', Vehicle::STATUS_ACTIVE)
+                                ->orderBy('type')->orderBy('unit_number')
+                                ->get()
+                                ->mapWithKeys(fn (Vehicle $v) => [
+                                    $v->id => "{$v->unit_number} · "
+                                        . (Vehicle::types()[$v->type] ?? $v->type)
+                                        . ($v->capacity_passengers ? " · seats {$v->capacity_passengers}" : ''),
+                                ])
+                                ->toArray())
                             ->searchable()
                             ->preload()
                             ->required()
+                            ->minItems(1)
                             ->live()
-                            ->default(fn (TripReservation $r) => $r->vehicle_id),
+                            ->default(fn (TripReservation $r) => $r->vehicle_id ? [$r->vehicle_id] : []),
 
                         SchemaView::make('filament.partials.approval-checks')
-                            ->viewData(fn (Get $get, TripReservation $r) => [
-                                'issues' => self::approvalIssuesFor($r, $get('vehicle_id') ? (int) $get('vehicle_id') : null),
-                            ]),
+                            ->viewData(function (Get $get, TripReservation $r) {
+                                $ids = (array) ($get('vehicle_ids') ?? []);
+                                if (empty($ids)) return ['issues' => []];
+
+                                // For splits, also compute per-vehicle capacity + the combined seats check
+                                $allIssues = [];
+                                foreach ($ids as $vid) {
+                                    $issuesForThis = self::approvalIssuesFor($r, (int) $vid);
+                                    foreach ($issuesForThis as $issue) {
+                                        $allIssues[] = $issue;
+                                    }
+                                }
+
+                                // Combined capacity check (for splits only — if 1 vehicle, the per-vehicle
+                                // check already covers it)
+                                if (count($ids) > 1 && $r->expected_passengers) {
+                                    $totalSeats = Vehicle::whereIn('id', $ids)->sum('capacity_passengers');
+                                    if ($totalSeats > 0 && $r->expected_passengers > $totalSeats) {
+                                        $allIssues[] = "Combined capacity: request is for {$r->expected_passengers} passengers, the {$totalSeats} combined seats across selected vehicles is not enough.";
+                                    }
+                                }
+
+                                return ['issues' => $allIssues];
+                            }),
 
                         Checkbox::make('force_override')
                             ->label('Approve anyway (override warnings above)')
-                            ->helperText('Only check this when the warnings are acceptable / resolved out-of-band. A note is added to the reservation for the audit trail.')
+                            ->helperText('Only check this when the warnings are acceptable / resolved out-of-band. A note is added to every affected reservation for the audit trail.')
                             ->default(false),
                     ])
                     ->action(function (TripReservation $r, array $data) {
-                        $vehicleId = (int) $data['vehicle_id'];
-                        $issues = self::approvalIssuesFor($r, $vehicleId);
+                        $vehicleIds = array_values(array_filter(array_map('intval', (array) ($data['vehicle_ids'] ?? []))));
 
-                        if (! empty($issues) && empty($data['force_override'])) {
+                        if (empty($vehicleIds)) {
+                            Notification::make()->title('No vehicle selected')->danger()->send();
+                            return;
+                        }
+
+                        // Collect issues across all vehicles + the combined-capacity check
+                        $allIssues = [];
+                        foreach ($vehicleIds as $vid) {
+                            foreach (self::approvalIssuesFor($r, $vid) as $i) {
+                                $allIssues[] = $i;
+                            }
+                        }
+                        if (count($vehicleIds) > 1 && $r->expected_passengers) {
+                            $totalSeats = Vehicle::whereIn('id', $vehicleIds)->sum('capacity_passengers');
+                            if ($totalSeats > 0 && $r->expected_passengers > $totalSeats) {
+                                $allIssues[] = "Combined capacity: request is for {$r->expected_passengers} passengers, the {$totalSeats} combined seats across selected vehicles is not enough.";
+                            }
+                        }
+
+                        if (! empty($allIssues) && empty($data['force_override'])) {
                             Notification::make()
-                                ->title('Approval blocked — ' . count($issues) . ' issue' . (count($issues) === 1 ? '' : 's'))
-                                ->body(implode("\n\n", $issues))
+                                ->title('Approval blocked — ' . count($allIssues) . ' issue' . (count($allIssues) === 1 ? '' : 's'))
+                                ->body(implode("\n\n", $allIssues))
                                 ->danger()
                                 ->persistent()
                                 ->send();
@@ -135,27 +190,80 @@ class TripRequestsTable
                         }
 
                         $noteAppend = null;
-                        if (! empty($issues)) {
+                        if (! empty($allIssues)) {
                             $noteAppend = '[APPROVED OVER WARNINGS on ' . now()->format('M j, Y g:i a') . ' by '
-                                . (auth()->user()?->name ?? 'unknown') . ']' . PHP_EOL . implode(PHP_EOL, $issues);
+                                . (auth()->user()?->name ?? 'unknown') . ']' . PHP_EOL . implode(PHP_EOL, $allIssues);
                         }
 
+                        $isSplit = count($vehicleIds) > 1;
+                        $splitGroupId = $isSplit ? (string) \Illuminate\Support\Str::uuid() : null;
+                        $now = now();
+
+                        // Per-vehicle passenger allocation when splitting: divide as evenly
+                        // as possible, with any remainder landing on the first legs.
+                        $paxTotal = (int) ($r->expected_passengers ?? 0);
+                        $paxAllocation = [];
+                        if ($isSplit && $paxTotal > 0) {
+                            $base = intdiv($paxTotal, count($vehicleIds));
+                            $remainder = $paxTotal - ($base * count($vehicleIds));
+                            foreach ($vehicleIds as $idx => $_) {
+                                $paxAllocation[$idx] = $base + ($idx < $remainder ? 1 : 0);
+                            }
+                        }
+
+                        $appendNoteTo = function ($res) use ($noteAppend) {
+                            if (! $noteAppend) return $res->notes;
+                            return trim(($res->notes ? $res->notes . PHP_EOL . PHP_EOL : '') . $noteAppend);
+                        };
+
+                        // Primary leg: update the original request in place.
                         $r->update([
                             'status' => TripReservation::STATUS_RESERVED,
-                            'vehicle_id' => $vehicleId,
-                            'issued_at' => now(),
+                            'vehicle_id' => $vehicleIds[0],
+                            'issued_at' => $now,
                             'issued_by_user_id' => auth()->id(),
                             'denied_reason' => null,
                             'denied_at' => null,
                             'denied_by_user_id' => null,
-                            'notes' => $noteAppend
-                                ? trim(($r->notes ? $r->notes . PHP_EOL . PHP_EOL : '') . $noteAppend)
-                                : $r->notes,
+                            'split_group_id' => $splitGroupId,
+                            'expected_passengers' => $isSplit && $paxTotal > 0 ? $paxAllocation[0] : $r->expected_passengers,
+                            'notes' => $appendNoteTo($r),
                         ]);
 
+                        // Additional legs: clone the request into new reservations with
+                        // source=admin_issue (the additional vehicles are issued by the admin,
+                        // not by the teacher's original request).
+                        foreach (array_slice($vehicleIds, 1) as $idx => $vehicleId) {
+                            $leg = TripReservation::create([
+                                'vehicle_id' => $vehicleId,
+                                'source' => TripReservation::SOURCE_ADMIN_ISSUE,
+                                'status' => TripReservation::STATUS_RESERVED,
+                                'purpose' => $r->purpose,
+                                'planned_trip_type' => $r->planned_trip_type,
+                                'expected_driver_name' => $r->expected_driver_name,
+                                'expected_passengers' => $paxAllocation[$idx + 1] ?? $r->expected_passengers,
+                                'desired_start_at' => $r->desired_start_at,
+                                'expected_return_at' => $r->expected_return_at,
+                                'preferred_vehicle_type' => $r->preferred_vehicle_type,
+                                'requested_by_user_id' => $r->requested_by_user_id,
+                                'issued_at' => $now,
+                                'issued_by_user_id' => auth()->id(),
+                                'split_group_id' => $splitGroupId,
+                                'split_parent_request_id' => $r->id,
+                                'notes' => $noteAppend,
+                            ]);
+                        }
+
+                        $title = match (true) {
+                            $noteAppend && $isSplit => 'Split-approved over warnings',
+                            $isSplit => "Approved across " . count($vehicleIds) . " vehicles",
+                            $noteAppend => 'Approved over warnings',
+                            default => 'Request approved',
+                        };
+
                         Notification::make()
-                            ->title($noteAppend ? 'Approved over warnings' : 'Request approved')
-                            ->body($noteAppend ? 'Conflicts or capacity issues were overridden — note added to reservation.' : null)
+                            ->title($title)
+                            ->body($isSplit ? 'Created ' . count($vehicleIds) . ' linked reservations, one per vehicle.' : null)
                             ->color($noteAppend ? 'warning' : 'success')
                             ->send();
                     }),

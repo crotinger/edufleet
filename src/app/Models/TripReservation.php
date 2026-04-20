@@ -78,6 +78,30 @@ class TripReservation extends Model
         return $this->belongsTo(User::class, 'denied_by_user_id');
     }
 
+    /**
+     * When a teacher request is approved across multiple vehicles, every leg
+     * shares a split_group_id UUID. This scope returns all other legs for the
+     * same group (not including the current record).
+     */
+    public function splitSiblings(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(self::class, 'split_group_id', 'split_group_id')
+            ->where('id', '!=', $this->id);
+    }
+
+    /**
+     * All legs (including self) of a split group.
+     *
+     * @return \Illuminate\Support\Collection<int, self>
+     */
+    public function allSplitLegs(): \Illuminate\Support\Collection
+    {
+        if (! $this->split_group_id) {
+            return collect([$this]);
+        }
+        return self::where('split_group_id', $this->split_group_id)->orderBy('id')->get();
+    }
+
     public static function sources(): array
     {
         return [
