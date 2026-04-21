@@ -13,7 +13,7 @@ class RolesAndPermissionsSeeder extends Seeder
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
-        $resources = ['vehicle', 'driver', 'trip', 'trip_request', 'trip_reservation', 'maintenance', 'inspection', 'registration', 'route', 'fuel_log', 'ridership', 'user', 'role'];
+        $resources = ['vehicle', 'driver', 'student', 'trip', 'trip_request', 'trip_reservation', 'maintenance', 'inspection', 'registration', 'route', 'fuel_log', 'ridership', 'user', 'role'];
         $abilities = ['view_any', 'view', 'create', 'update', 'delete', 'restore', 'force_delete'];
 
         foreach ($resources as $resource) {
@@ -56,6 +56,7 @@ class RolesAndPermissionsSeeder extends Seeder
             Permission::whereIn('name', [
                 'view_any_vehicle', 'view_vehicle',
                 'view_any_route', 'view_route',
+                'view_any_student', 'view_student',
                 'view_any_ridership', 'view_ridership', 'create_ridership',
                 'view_any_trip', 'view_trip', 'create_trip',
                 'create_fuel_log',
