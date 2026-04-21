@@ -2,12 +2,15 @@
 
 namespace App\Filament\Resources\Students\Tables;
 
+use App\Jobs\GeocodeStudent;
 use App\Models\Student;
+use Filament\Actions\BulkAction;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ForceDeleteBulkAction;
 use Filament\Actions\RestoreBulkAction;
+use Filament\Notifications\Notification;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
@@ -16,6 +19,7 @@ use Filament\Tables\Filters\TernaryFilter;
 use Filament\Tables\Filters\TrashedFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 
 class StudentsTable
 {
@@ -108,6 +112,25 @@ class StudentsTable
             ])
             ->toolbarActions([
                 BulkActionGroup::make([
+                    BulkAction::make('geocode_missing')
+                        ->label('Geocode missing coordinates')
+                        ->icon('heroicon-o-map-pin')
+                        ->color('info')
+                        ->requiresConfirmation()
+                        ->modalDescription('Queues a geocoding job for each selected student that has an address but no coordinates. Up to ~1 job/second due to the public Nominatim rate limit.')
+                        ->action(function (Collection $records) {
+                            $count = 0;
+                            foreach ($records as $record) {
+                                if (filled($record->home_address) && ! $record->is_geocoded) {
+                                    GeocodeStudent::dispatch($record->id);
+                                    $count++;
+                                }
+                            }
+                            Notification::make()
+                                ->title("Queued {$count} geocode job" . ($count === 1 ? '' : 's'))
+                                ->success()
+                                ->send();
+                        }),
                     DeleteBulkAction::make(),
                     ForceDeleteBulkAction::make(),
                     RestoreBulkAction::make(),
