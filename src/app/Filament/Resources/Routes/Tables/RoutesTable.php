@@ -2,12 +2,15 @@
 
 namespace App\Filament\Resources\Routes\Tables;
 
+use App\Filament\Resources\Routes\RouteResource;
 use App\Models\Route;
+use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ForceDeleteBulkAction;
 use Filament\Actions\RestoreBulkAction;
+use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Filters\TrashedFilter;
@@ -19,6 +22,7 @@ class RoutesTable
     {
         return $table
             ->defaultSort('code')
+            ->modifyQueryUsing(fn ($query) => $query->with('activePath'))
             ->columns([
                 TextColumn::make('code')->searchable()->sortable(),
                 TextColumn::make('name')->searchable()->sortable()->wrap(),
@@ -40,14 +44,35 @@ class RoutesTable
                     ->label('Return')
                     ->formatStateUsing(fn (?string $state) => $state ? \Carbon\Carbon::parse($state)->format('g:i a') : '—')
                     ->toggleable(),
-                TextColumn::make('estimated_miles')->label('Est mi')->numeric()->toggleable(),
+                TextColumn::make('activePath.stop_count')
+                    ->label('Stops')
+                    ->formatStateUsing(fn (Route $r) => $r->activePath ? (string) $r->activePath->stop_count : '—'),
+                TextColumn::make('activePath.distance_miles')
+                    ->label('Planned mi')
+                    ->formatStateUsing(fn (Route $r) => $r->activePath?->distance_miles !== null
+                        ? number_format($r->activePath->distance_miles, 2)
+                        : '—'),
+                TextColumn::make('activePath.duration_minutes')
+                    ->label('Planned min')
+                    ->formatStateUsing(fn (Route $r) => $r->activePath?->duration_minutes !== null
+                        ? (string) $r->activePath->duration_minutes
+                        : '—')
+                    ->toggleable(),
+                TextColumn::make('estimated_miles')->label('Est mi (manual)')->numeric()->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('created_at')->dateTime()->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
                 SelectFilter::make('status')->options(Route::statuses()),
                 TrashedFilter::make(),
             ])
-            ->recordActions([EditAction::make()])
+            ->recordActions([
+                Action::make('plan')
+                    ->label('Plan')
+                    ->icon(Heroicon::OutlinedMap)
+                    ->color('primary')
+                    ->url(fn (Route $record) => RouteResource::getUrl('plan', ['record' => $record])),
+                EditAction::make(),
+            ])
             ->toolbarActions([
                 BulkActionGroup::make([
                     DeleteBulkAction::make(),
