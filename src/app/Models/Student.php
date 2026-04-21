@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
@@ -77,6 +78,22 @@ class Student extends Model
             '10' => '10th',
             '11' => '11th',
             '12' => '12th',
+        ];
+    }
+
+    public function routes(): BelongsToMany
+    {
+        return $this->belongsToMany(Route::class)
+            ->withPivot(['direction', 'notes'])
+            ->withTimestamps();
+    }
+
+    public static function directions(): array
+    {
+        return [
+            'am' => 'AM only',
+            'pm' => 'PM only',
+            'both' => 'AM + PM',
         ];
     }
 

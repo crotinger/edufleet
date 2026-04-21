@@ -47,7 +47,7 @@ class RouteResource extends Resource
     public static function getRelations(): array
     {
         return [
-            //
+            \App\Filament\Resources\Routes\RelationManagers\StudentsRelationManager::class,
         ];
     }
 

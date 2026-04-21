@@ -32,7 +32,7 @@ class StudentResource extends Resource
 
     protected static string|\UnitEnum|null $navigationGroup = 'Fleet';
 
-    protected static ?int $navigationSort = 30;
+    protected static ?int $navigationSort = 35;
 
     public static function form(Schema $schema): Schema
     {
@@ -46,7 +46,9 @@ class StudentResource extends Resource
 
     public static function getRelations(): array
     {
-        return [];
+        return [
+            \App\Filament\Resources\Students\RelationManagers\RoutesRelationManager::class,
+        ];
     }
 
     public static function getPages(): array
