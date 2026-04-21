@@ -27,6 +27,7 @@ class Student extends Model
             'hazardous_route' => 'boolean',
             'active' => 'boolean',
             'geocoded_at' => 'datetime',
+            'last_geocode_attempted_at' => 'datetime',
         ];
     }
 

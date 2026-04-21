@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Thin wrapper around OpenStreetMap's Nominatim geocoding service.
@@ -22,13 +21,19 @@ class NominatimGeocoder
     ) {}
 
     /**
-     * Geocode a single address. Returns ['lat' => float, 'lng' => float] or null.
+     * Geocode a single address.
+     *
+     * @return array{lat: float, lng: float}
+     *
+     * @throws \InvalidArgumentException when address is empty
+     * @throws \RuntimeException on network error, non-200 response, no results,
+     *                           or malformed response (message always set and user-readable)
      */
-    public function geocode(string $address): ?array
+    public function geocode(string $address): array
     {
         $address = trim($address);
         if ($address === '') {
-            return null;
+            throw new \InvalidArgumentException('Address is empty');
         }
 
         $ua = $this->userAgent ?? ('edufleet/1.0 (' . config('app.url') . ')');
@@ -43,23 +48,21 @@ class NominatimGeocoder
                     'addressdetails' => 0,
                 ]);
         } catch (\Throwable $e) {
-            Log::warning('Nominatim geocode failed', ['address' => $address, 'error' => $e->getMessage()]);
-            return null;
+            throw new \RuntimeException('Network error contacting Nominatim: ' . $e->getMessage(), 0, $e);
         }
 
         if (! $response->successful()) {
-            Log::warning('Nominatim geocode non-200', ['address' => $address, 'status' => $response->status()]);
-            return null;
+            throw new \RuntimeException('Nominatim returned HTTP ' . $response->status());
         }
 
         $hits = $response->json();
         if (! is_array($hits) || count($hits) === 0) {
-            return null;
+            throw new \RuntimeException('Address not found in OpenStreetMap');
         }
 
         $first = $hits[0];
         if (! isset($first['lat'], $first['lon'])) {
-            return null;
+            throw new \RuntimeException('Nominatim response missing lat/lon');
         }
 
         return [

@@ -12,6 +12,8 @@ use Filament\Actions\ImportAction;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ListRecords;
 use Filament\Support\Icons\Heroicon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 
 class ListStudents extends ListRecords
 {
@@ -20,6 +22,30 @@ class ListStudents extends ListRecords
     protected function getHeaderActions(): array
     {
         return [
+            Action::make('queue_status')
+                ->label('Queue status')
+                ->icon(Heroicon::OutlinedQueueList)
+                ->color('gray')
+                ->modalHeading('Geocoding / queue status')
+                ->modalSubmitAction(false)
+                ->modalCancelActionLabel('Close')
+                ->modalContent(function () {
+                    $pending = 0;
+                    try {
+                        $pending = Queue::size();
+                    } catch (\Throwable $e) {
+                        $pending = -1;
+                    }
+                    $failed = DB::table('failed_jobs')->count();
+                    $erroredStudents = Student::whereNotNull('last_geocode_error')->count();
+                    $missing = Student::missingGeocode()->count();
+                    $recentErrors = Student::whereNotNull('last_geocode_error')
+                        ->orderByDesc('last_geocode_attempted_at')
+                        ->limit(5)
+                        ->get(['first_name', 'last_name', 'home_address', 'last_geocode_error', 'last_geocode_attempted_at']);
+
+                    return view('filament.partials.queue-status', compact('pending', 'failed', 'erroredStudents', 'missing', 'recentErrors'));
+                }),
             Action::make('geocode_all_missing')
                 ->label('Geocode missing addresses')
                 ->icon(Heroicon::OutlinedMapPin)

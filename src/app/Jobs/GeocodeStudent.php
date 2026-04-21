@@ -7,13 +7,15 @@ use App\Services\NominatimGeocoder;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable as FoundationQueueable;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 
 class GeocodeStudent implements ShouldQueue
 {
     use Queueable;
     use FoundationQueueable;
 
-    public int $tries = 2;
+    public int $tries = 1;
 
     public int $timeout = 30;
 
@@ -33,18 +35,31 @@ class GeocodeStudent implements ShouldQueue
             return;
         }
 
-        $result = $geocoder->geocode($student->home_address);
-        if ($result === null) {
-            return;
+        try {
+            $result = $geocoder->geocode($student->home_address);
+
+            $student->forceFill([
+                'home_lat' => $result['lat'],
+                'home_lng' => $result['lng'],
+                'geocoded_at' => now(),
+                'last_geocode_attempted_at' => now(),
+                'last_geocode_error' => null,
+            ])->save();
+        } catch (\Throwable $e) {
+            $student->forceFill([
+                'last_geocode_attempted_at' => now(),
+                'last_geocode_error' => Str::limit($e->getMessage(), 500),
+            ])->save();
+
+            Log::warning('Student geocode failed', [
+                'student_id' => $student->id,
+                'address' => $student->home_address,
+                'error' => $e->getMessage(),
+            ]);
+        } finally {
+            // Honor Nominatim's 1 req/sec guideline whether the call succeeded
+            // or not — back-to-back 400s are still requests.
+            sleep(1);
         }
-
-        $student->forceFill([
-            'home_lat' => $result['lat'],
-            'home_lng' => $result['lng'],
-            'geocoded_at' => now(),
-        ])->save();
-
-        // Respect Nominatim's 1 req/sec guideline when many jobs queue up.
-        sleep(1);
     }
 }

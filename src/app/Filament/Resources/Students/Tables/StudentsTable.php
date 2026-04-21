@@ -77,6 +77,18 @@ class StudentsTable
                     ->boolean()
                     ->sortable(),
 
+                TextColumn::make('last_geocode_attempted_at')
+                    ->label('Last geocode try')
+                    ->dateTime()
+                    ->sortable()
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('last_geocode_error')
+                    ->label('Geocode error')
+                    ->wrap()
+                    ->color('danger')
+                    ->limit(80)
+                    ->tooltip(fn (Student $record) => $record->last_geocode_error)
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('emergency_contact_phone')->label('Emergency')->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('created_at')->dateTime()->sortable()->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('deleted_at')->dateTime()->sortable()->toggleable(isToggledHiddenByDefault: true),
@@ -105,6 +117,10 @@ class StudentsTable
                         ->where(function (Builder $q) {
                             $q->whereNull('home_lat')->orWhereNull('home_lng');
                         })),
+                Filter::make('geocode_errored')
+                    ->label('Geocode errored last attempt')
+                    ->toggle()
+                    ->query(fn (Builder $query) => $query->whereNotNull('last_geocode_error')),
                 TrashedFilter::make(),
             ])
             ->recordActions([
