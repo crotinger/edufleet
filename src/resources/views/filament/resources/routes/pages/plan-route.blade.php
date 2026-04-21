@@ -5,6 +5,7 @@
     $initialVersion = $activePath?->version_name ?? 'v1';
     $initialDistanceM = $activePath?->distance_meters;
     $initialDurationS = $activePath?->duration_seconds;
+    $routeStudents = $this->getRouteStudents();
 @endphp
 
 <x-filament-panels::page>
@@ -20,6 +21,7 @@
             initialVersion: @js($initialVersion),
             initialDistanceM: @js($initialDistanceM),
             initialDurationS: @js($initialDurationS),
+            routeStudents: @js($routeStudents),
             centerLat: {{ $center[0] }},
             centerLng: {{ $center[1] }},
         })"
@@ -64,6 +66,40 @@
                                    class="fi-input flex-1 rounded border-gray-300 dark:border-white/10 dark:bg-white/5 text-xs px-2 py-1" />
                             <button type="button" @click="removeStop(i)"
                                     class="text-danger-500 hover:text-danger-700 text-sm shrink-0">&times;</button>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+
+            <div class="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900 p-3">
+                <div class="flex items-center justify-between mb-2">
+                    <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                        Roster (<span x-text="routeStudents.length"></span>)
+                    </div>
+                    <button type="button" @click="addAllStudents()"
+                            x-show="routeStudents.length > 0 && unaddedStudentCount() > 0"
+                            class="text-xs text-primary-600 hover:text-primary-700">add all</button>
+                </div>
+                <template x-if="routeStudents.length === 0">
+                    <div class="text-xs text-gray-500 dark:text-gray-400 italic">
+                        No geocoded students assigned to this route. Attach students on the route's Roster tab and geocode their addresses first.
+                    </div>
+                </template>
+                <ul class="space-y-0.5 max-h-52 overflow-y-auto" x-show="routeStudents.length > 0">
+                    <template x-for="student in routeStudents" :key="student.id">
+                        <li>
+                            <button type="button"
+                                    @click="addStudent(student)"
+                                    @mouseenter="flashStudent(student)"
+                                    :disabled="isStudentAdded(student)"
+                                    :class="isStudentAdded(student)
+                                        ? 'text-gray-400 cursor-default'
+                                        : 'text-gray-700 dark:text-gray-300 hover:bg-primary-50 dark:hover:bg-primary-500/10 hover:text-primary-700'"
+                                    class="w-full text-left text-xs py-1 px-2 rounded flex items-center gap-2">
+                                <span class="truncate flex-1" x-text="student.name"></span>
+                                <span x-show="isStudentAdded(student)" class="text-success-500">&#10003;</span>
+                                <span x-show="!isStudentAdded(student)" class="text-gray-400">+</span>
+                            </button>
                         </li>
                     </template>
                 </ul>
@@ -126,6 +162,7 @@
                     student_id: s.student_id ?? null,
                 })),
                 geometry: config.initialGeometry,
+                routeStudents: config.routeStudents || [],
                 versionName: config.initialVersion || 'v1',
                 distanceMiles: config.initialDistanceM != null
                     ? Math.round((config.initialDistanceM / 1609.344) * 100) / 100
@@ -230,6 +267,71 @@
                     if (this.stops.length === 0) return;
                     const bounds = L.latLngBounds(this.stops.map(s => [s.lat, s.lng]));
                     this.map.fitBounds(bounds, { maxZoom: 15, padding: [40, 40] });
+                },
+
+                isStudentAdded(student) {
+                    return this.stops.some(s => s.student_id === student.id);
+                },
+
+                unaddedStudentCount() {
+                    const added = new Set(this.stops.map(s => s.student_id).filter(id => id != null));
+                    return this.routeStudents.filter(s => !added.has(s.id)).length;
+                },
+
+                addStudent(student) {
+                    if (this.isStudentAdded(student)) return;
+                    this.stops.push({
+                        id: 'student-' + student.id + '-' + Date.now(),
+                        name: student.name,
+                        lat: student.lat,
+                        lng: student.lng,
+                        order: this.stops.length,
+                        student_id: student.id,
+                    });
+                    this.redrawMarkers();
+                    this.invalidateRouting();
+                },
+
+                addAllStudents() {
+                    const added = new Set(this.stops.map(s => s.student_id).filter(id => id != null));
+                    let n = 0;
+                    this.routeStudents.forEach(student => {
+                        if (added.has(student.id)) return;
+                        this.stops.push({
+                            id: 'student-' + student.id + '-' + Date.now() + '-' + n,
+                            name: student.name,
+                            lat: student.lat,
+                            lng: student.lng,
+                            order: this.stops.length,
+                            student_id: student.id,
+                        });
+                        n++;
+                    });
+                    if (n > 0) {
+                        this.redrawMarkers();
+                        this.fitToStops();
+                        this.invalidateRouting();
+                    }
+                },
+
+                _flashCircle: null,
+
+                flashStudent(student) {
+                    if (this._flashCircle) this.map.removeLayer(this._flashCircle);
+                    this._flashCircle = L.circleMarker([student.lat, student.lng], {
+                        radius: 8,
+                        color: '#f59e0b',
+                        weight: 3,
+                        fillColor: '#fbbf24',
+                        fillOpacity: 0.5,
+                    }).addTo(this.map);
+                    clearTimeout(this._flashTimer);
+                    this._flashTimer = setTimeout(() => {
+                        if (this._flashCircle) {
+                            this.map.removeLayer(this._flashCircle);
+                            this._flashCircle = null;
+                        }
+                    }, 1200);
                 },
 
                 serializeStops() {

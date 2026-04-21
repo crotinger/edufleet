@@ -33,6 +33,26 @@ class PlanRoute extends Page
         return "Plan — {$this->record->code} {$this->record->name}";
     }
 
+    /** @return array<int, array{id: int, name: string, lat: float, lng: float, address: ?string}> */
+    public function getRouteStudents(): array
+    {
+        return $this->record->students()
+            ->whereNotNull('home_lat')
+            ->whereNotNull('home_lng')
+            ->orderBy('last_name')
+            ->orderBy('first_name')
+            ->get()
+            ->map(fn (Student $s) => [
+                'id' => (int) $s->id,
+                'name' => trim("{$s->last_name}, {$s->first_name}") . ($s->grade ? " (Gr {$s->grade})" : ''),
+                'lat' => (float) $s->home_lat,
+                'lng' => (float) $s->home_lng,
+                'address' => $s->home_address,
+            ])
+            ->values()
+            ->all();
+    }
+
     public function getCenterCoordinates(): array
     {
         if ($this->activePath && is_array($this->activePath->stops) && count($this->activePath->stops) > 0) {
