@@ -1,10 +1,17 @@
 @php
     $center = $this->getCenterCoordinates();
-    $initialStops = $activePath?->stops ?? [];
-    $initialGeometry = $activePath?->geometry ?? null;
-    $initialVersion = $activePath?->version_name ?? 'v1';
-    $initialDistanceM = $activePath?->distance_meters;
-    $initialDurationS = $activePath?->duration_seconds;
+    $initialVersions = $this->getVersions();
+    $loadedId = $this->currentPathId;
+    $loaded = $loadedId
+        ? collect($initialVersions)->firstWhere('id', $loadedId)
+        : null;
+    $activeId = collect($initialVersions)->firstWhere('is_active', true)['id'] ?? null;
+    $initialPath = $loadedId ? \App\Models\RoutePath::find($loadedId) : null;
+    $initialStops = $initialPath?->stops ?? [];
+    $initialGeometry = $initialPath?->geometry;
+    $initialVersionName = $initialPath?->version_name ?? 'v1';
+    $initialDistanceM = $initialPath?->distance_meters;
+    $initialDurationS = $initialPath?->duration_seconds;
     $routeStudents = $this->getRouteStudents();
 @endphp
 
@@ -18,9 +25,12 @@
         x-data="routePlanner({
             initialStops: @js($initialStops),
             initialGeometry: @js($initialGeometry),
-            initialVersion: @js($initialVersion),
+            initialVersion: @js($initialVersionName),
             initialDistanceM: @js($initialDistanceM),
             initialDurationS: @js($initialDurationS),
+            initialCurrentPathId: @js($loadedId),
+            initialActivePathId: @js($activeId),
+            initialVersions: @js($initialVersions),
             routeStudents: @js($routeStudents),
             centerLat: {{ $center[0] }},
             centerLng: {{ $center[1] }},
@@ -39,12 +49,60 @@
                 @endif
             </div>
 
+            {{-- Editing label + version name --}}
             <div class="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900 p-3">
-                <label class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 block mb-1">Version</label>
+                <label class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 block mb-1">
+                    <span x-show="currentPathId">Editing</span>
+                    <span x-show="!currentPathId">New version</span>
+                </label>
                 <input type="text" x-model="versionName"
                        class="fi-input block w-full rounded-md border-gray-300 dark:border-white/10 dark:bg-white/5 text-sm px-3 py-1.5" />
             </div>
 
+            {{-- Versions list --}}
+            <div class="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900 p-3">
+                <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+                    Versions (<span x-text="versions.length"></span>)
+                </div>
+                <template x-if="versions.length === 0">
+                    <div class="text-xs text-gray-500 dark:text-gray-400 italic">Save to create the first version.</div>
+                </template>
+                <ul class="space-y-1" x-show="versions.length > 0">
+                    <template x-for="v in versions" :key="v.id">
+                        <li class="rounded p-1.5 flex items-start gap-1.5"
+                            :class="v.id === currentPathId
+                                ? 'bg-primary-50 dark:bg-primary-500/10 border border-primary-300 dark:border-primary-500/30'
+                                : 'border border-transparent hover:bg-gray-50 dark:hover:bg-white/5'">
+                            <button type="button" @click="loadVersion(v.id)"
+                                    class="flex-1 text-left min-w-0">
+                                <div class="flex items-center gap-1 flex-wrap">
+                                    <span class="text-xs font-medium text-gray-900 dark:text-white truncate" x-text="v.version_name"></span>
+                                    <span x-show="v.is_active" class="text-[10px] bg-success-500 text-white px-1 rounded leading-tight">active</span>
+                                    <span x-show="v.id === currentPathId && !v.is_active" class="text-[10px] bg-primary-500 text-white px-1 rounded leading-tight">editing</span>
+                                </div>
+                                <div class="text-[11px] text-gray-500 dark:text-gray-400">
+                                    <span x-text="v.stops_count"></span> stop<span x-text="v.stops_count === 1 ? '' : 's'"></span>
+                                    <span x-show="v.distance_miles !== null"> · <span x-text="v.distance_miles"></span> mi</span>
+                                    <span x-show="v.updated_at"> · <span x-text="v.updated_at"></span></span>
+                                </div>
+                            </button>
+                            <div class="flex flex-col gap-0.5 shrink-0">
+                                <button type="button" x-show="!v.is_active" @click="activateVersion(v.id)"
+                                        title="Make active"
+                                        class="text-success-600 hover:text-success-800 text-xs leading-none px-1">&#10003;</button>
+                                <button type="button" @click="renameVersionPrompt(v)"
+                                        title="Rename"
+                                        class="text-gray-500 hover:text-gray-700 text-xs leading-none px-1">&#9998;</button>
+                                <button type="button" x-show="!v.is_active" @click="deleteVersionConfirm(v)"
+                                        title="Delete"
+                                        class="text-danger-500 hover:text-danger-700 text-sm leading-none px-1">&times;</button>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+
+            {{-- Stops --}}
             <div class="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900 p-3">
                 <div class="flex items-center justify-between mb-2">
                     <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
@@ -71,6 +129,7 @@
                 </ul>
             </div>
 
+            {{-- Roster --}}
             <div class="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900 p-3">
                 <div class="flex items-center justify-between mb-2">
                     <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
@@ -105,6 +164,7 @@
                 </ul>
             </div>
 
+            {{-- Totals --}}
             <div class="rounded-lg border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900 p-3">
                 <div class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">Totals</div>
                 <dl class="text-sm space-y-0.5">
@@ -117,11 +177,12 @@
                         <dd class="font-medium" x-text="durationMinutes !== null ? durationMinutes + ' min' : '—'"></dd>
                     </div>
                 </dl>
-                <div class="mt-2 text-xs text-gray-400 italic" x-show="distanceMiles === null">
-                    Save to compute distance in the next step (routing).
+                <div class="mt-2 text-xs text-gray-400 italic" x-show="distanceMiles === null && stops.length >= 2">
+                    Click Recalculate to trace the route.
                 </div>
             </div>
 
+            {{-- Actions --}}
             <div class="flex flex-col gap-2">
                 <button type="button" @click="recalculate()"
                         :disabled="busy || stops.length < 2"
@@ -138,8 +199,17 @@
                 <button type="button" @click="save()"
                         :disabled="busy"
                         class="rounded-lg bg-primary-600 text-white px-3 py-2 text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
-                    <span x-show="!busy || busyLabel !== 'Saving'">Save</span>
+                    <span x-show="!busy || busyLabel !== 'Saving'">
+                        <span x-show="currentPathId">Save version</span>
+                        <span x-show="!currentPathId">Save</span>
+                    </span>
                     <span x-show="busy && busyLabel === 'Saving'">Saving…</span>
+                </button>
+                <button type="button" @click="saveAsNew()"
+                        :disabled="busy || stops.length === 0"
+                        class="rounded-lg border border-gray-300 dark:border-white/10 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">
+                    <span x-show="!busy || busyLabel !== 'SavingAsNew'">Save as new version</span>
+                    <span x-show="busy && busyLabel === 'SavingAsNew'">Saving…</span>
                 </button>
             </div>
         </div>
@@ -163,6 +233,9 @@
                 })),
                 geometry: config.initialGeometry,
                 routeStudents: config.routeStudents || [],
+                versions: config.initialVersions || [],
+                currentPathId: config.initialCurrentPathId ?? null,
+                activePathId: config.initialActivePathId ?? null,
                 versionName: config.initialVersion || 'v1',
                 distanceMiles: config.initialDistanceM != null
                     ? Math.round((config.initialDistanceM / 1609.344) * 100) / 100
@@ -189,9 +262,35 @@
 
                     this.redrawMarkers();
                     this.drawGeometry();
-
-                    // Fit if we have existing stops
                     this.fitToStops();
+                },
+
+                /** Apply a full server-side state snapshot (replaces everything). */
+                applyState(state) {
+                    if (!state) return;
+                    this.stops = (state.stops || []).map((s, i) => ({
+                        id: s.id || ('s' + Date.now() + '-' + i),
+                        name: s.name || ('Stop ' + (i + 1)),
+                        lat: parseFloat(s.lat),
+                        lng: parseFloat(s.lng),
+                        order: i,
+                        student_id: s.student_id ?? null,
+                    }));
+                    this.geometry = state.geometry || null;
+                    this._distanceMeters = state.distance_meters ?? null;
+                    this._durationSeconds = state.duration_seconds ?? null;
+                    this.distanceMiles = this._distanceMeters != null
+                        ? Math.round((this._distanceMeters / 1609.344) * 100) / 100
+                        : null;
+                    this.durationMinutes = this._durationSeconds != null
+                        ? Math.round(this._durationSeconds / 60)
+                        : null;
+                    this.versionName = state.version_name || 'v1';
+                    this.currentPathId = state.current_path_id ?? null;
+                    this.activePathId = state.active_path_id ?? null;
+                    this.versions = state.versions || [];
+                    this.redrawMarkers();
+                    this.drawGeometry();
                 },
 
                 addStop(lat, lng) {
@@ -205,7 +304,6 @@
                         student_id: null,
                     });
                     this.redrawMarkers();
-                    // Changes invalidate cached geometry
                     this.invalidateRouting();
                 },
 
@@ -217,7 +315,7 @@
 
                 clearStops() {
                     if (this.stops.length === 0) return;
-                    if (!confirm('Remove all stops?')) return;
+                    if (!confirm('Remove all stops from this version?')) return;
                     this.stops = [];
                     this.invalidateRouting();
                     this.redrawMarkers();
@@ -345,6 +443,17 @@
                     }));
                 },
 
+                _payload() {
+                    return {
+                        version_name: this.versionName,
+                        stops: this.serializeStops(),
+                        geometry: this.geometry,
+                        distance_meters: this._distanceMeters,
+                        duration_seconds: this._durationSeconds,
+                        profile: 'driving',
+                    };
+                },
+
                 applyRoutingResult(result) {
                     if (!result) return;
                     this.geometry = result.geometry || null;
@@ -399,16 +508,81 @@
                 async save() {
                     this.busy = true;
                     this.busyLabel = 'Saving';
-                    const payload = {
-                        version_name: this.versionName,
-                        stops: this.serializeStops(),
-                        geometry: this.geometry,
-                        distance_meters: this._distanceMeters,
-                        duration_seconds: this._durationSeconds,
-                        profile: 'driving',
-                    };
                     try {
-                        await @this.call('save', payload);
+                        const state = await @this.call('save', this._payload());
+                        this.applyState(state);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async saveAsNew() {
+                    if (this.stops.length === 0) return;
+                    this.busy = true;
+                    this.busyLabel = 'SavingAsNew';
+                    const payload = this._payload();
+                    payload.version_name = ''; // let server assign "vN"
+                    try {
+                        const state = await @this.call('saveAsNewVersion', payload);
+                        this.applyState(state);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async loadVersion(id) {
+                    if (id === this.currentPathId) return;
+                    if (this.stops.length > 0 && !confirm('Discard current edits and load this version?')) return;
+                    this.busy = true;
+                    this.busyLabel = 'Loading';
+                    try {
+                        const state = await @this.call('loadVersion', id);
+                        this.applyState(state);
+                        this.fitToStops();
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async activateVersion(id) {
+                    this.busy = true;
+                    this.busyLabel = 'Activating';
+                    try {
+                        const state = await @this.call('activateVersion', id);
+                        this.applyState(state);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async deleteVersionConfirm(v) {
+                    if (v.is_active) return;
+                    if (!confirm('Delete version "' + v.version_name + '"?')) return;
+                    this.busy = true;
+                    this.busyLabel = 'Deleting';
+                    try {
+                        const state = await @this.call('deleteVersion', v.id);
+                        this.applyState(state);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async renameVersionPrompt(v) {
+                    const next = prompt('Rename version:', v.version_name);
+                    if (next === null) return;
+                    const trimmed = next.trim();
+                    if (trimmed === '' || trimmed === v.version_name) return;
+                    this.busy = true;
+                    this.busyLabel = 'Renaming';
+                    try {
+                        const state = await @this.call('renameVersion', v.id, trimmed);
+                        this.applyState(state);
                     } finally {
                         this.busy = false;
                         this.busyLabel = '';

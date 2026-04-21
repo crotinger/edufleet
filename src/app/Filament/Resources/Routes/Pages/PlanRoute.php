@@ -20,12 +20,13 @@ class PlanRoute extends Page
 
     public Route $record;
 
-    public ?RoutePath $activePath = null;
+    /** Version currently loaded in the editor (null = unsaved draft). */
+    public ?int $currentPathId = null;
 
     public function mount(int|string $record): void
     {
         $this->record = Route::findOrFail($record);
-        $this->activePath = $this->record->activePath;
+        $this->currentPathId = $this->record->activePath?->id;
     }
 
     public function getTitle(): string
@@ -33,7 +34,7 @@ class PlanRoute extends Page
         return "Plan — {$this->record->code} {$this->record->name}";
     }
 
-    /** @return array<int, array{id: int, name: string, lat: float, lng: float, address: ?string}> */
+    /** @return array<int, array> */
     public function getRouteStudents(): array
     {
         return $this->record->students()
@@ -55,8 +56,9 @@ class PlanRoute extends Page
 
     public function getCenterCoordinates(): array
     {
-        if ($this->activePath && is_array($this->activePath->stops) && count($this->activePath->stops) > 0) {
-            $first = $this->activePath->stops[0];
+        $loaded = $this->currentPathId ? RoutePath::find($this->currentPathId) : null;
+        if ($loaded && is_array($loaded->stops) && count($loaded->stops) > 0) {
+            $first = $loaded->stops[0];
             if (isset($first['lat'], $first['lng'])) {
                 return [(float) $first['lat'], (float) $first['lng']];
             }
@@ -78,17 +80,52 @@ class PlanRoute extends Page
             return [(float) $anyStudent->home_lat, (float) $anyStudent->home_lng];
         }
 
-        // US geographic center as last-resort fallback
         return [39.8283, -98.5795];
     }
 
+    /** @return array<int, array> */
+    public function getVersions(): array
+    {
+        return $this->record->paths()
+            ->orderByDesc('is_active')
+            ->orderByDesc('updated_at')
+            ->get()
+            ->map(fn (RoutePath $p) => [
+                'id' => (int) $p->id,
+                'version_name' => $p->version_name,
+                'stops_count' => $p->stop_count,
+                'distance_miles' => $p->distance_miles,
+                'duration_minutes' => $p->duration_minutes,
+                'is_active' => (bool) $p->is_active,
+                'updated_at' => $p->updated_at?->diffForHumans(),
+            ])
+            ->values()
+            ->all();
+    }
+
     /**
-     * Trace the route through the given stops in the given order. Returns
-     * geometry + distance + duration (nulls on failure).
+     * Full state snapshot shape that Alpine applies on every mutating call.
      *
-     * @param array<int, array{lat: float|string, lng: float|string, name?: string}> $stops
-     * @return array{geometry: array|null, distance_meters: int|null, duration_seconds: int|null}
+     * @return array<string, mixed>
      */
+    private function snapshot(?RoutePath $loaded = null): array
+    {
+        $loaded ??= $this->currentPathId
+            ? RoutePath::where('id', $this->currentPathId)->where('route_id', $this->record->id)->first()
+            : null;
+
+        return [
+            'stops' => $loaded?->stops ?? [],
+            'geometry' => $loaded?->geometry,
+            'distance_meters' => $loaded?->distance_meters,
+            'duration_seconds' => $loaded?->duration_seconds,
+            'version_name' => $loaded?->version_name ?? 'v1',
+            'current_path_id' => $loaded?->id,
+            'active_path_id' => $this->record->activePath()->value('id'),
+            'versions' => $this->getVersions(),
+        ];
+    }
+
     public function recalculate(array $stops): array
     {
         $coords = $this->extractCoordinates($stops);
@@ -112,13 +149,6 @@ class PlanRoute extends Page
         return $result;
     }
 
-    /**
-     * Solve the TSP over the given stops. Returns reordered stops plus the
-     * traced geometry and totals.
-     *
-     * @param array<int, array> $stops
-     * @return array{stops: array, geometry: array|null, distance_meters: int|null, duration_seconds: int|null}
-     */
     public function optimize(array $stops): array
     {
         $coords = $this->extractCoordinates($stops);
@@ -136,7 +166,6 @@ class PlanRoute extends Page
             ];
         }
 
-        // Keep first + last as anchors (depot → school), solve middle.
         $result = app(OsrmClient::class)->trip($coords, source: 'first', destination: 'last', roundtrip: false);
 
         if ($result === null || empty($result['order'])) {
@@ -173,6 +202,169 @@ class PlanRoute extends Page
         ];
     }
 
+    /** Update the currently-loaded version in place (or create if none). */
+    public function save(array $payload): array
+    {
+        $path = $this->currentPathId
+            ? RoutePath::where('id', $this->currentPathId)->where('route_id', $this->record->id)->first()
+            : null;
+
+        $creating = $path === null;
+
+        if ($creating) {
+            $path = new RoutePath([
+                'route_id' => $this->record->id,
+                'is_active' => true, // first path = auto-active
+            ]);
+        }
+
+        $this->writePayload($path, $payload);
+        $path->save();
+
+        $this->currentPathId = $path->id;
+
+        Notification::make()
+            ->title($creating ? "Created {$path->version_name}" : "Saved {$path->version_name}")
+            ->body(count($path->stops ?? []) . ' stops')
+            ->success()
+            ->send();
+
+        return $this->snapshot($path->fresh());
+    }
+
+    /** Create a new version row; don't activate automatically. */
+    public function saveAsNewVersion(array $payload): array
+    {
+        $path = new RoutePath([
+            'route_id' => $this->record->id,
+            'is_active' => false,
+        ]);
+
+        $payload['version_name'] = $this->resolveNewVersionName($payload['version_name'] ?? '');
+        $this->writePayload($path, $payload);
+        $path->save();
+
+        $this->currentPathId = $path->id;
+
+        Notification::make()
+            ->title("Created {$path->version_name}")
+            ->body('Not active — click Activate in the version list to use it for reporting.')
+            ->success()
+            ->send();
+
+        return $this->snapshot($path->fresh());
+    }
+
+    public function loadVersion(int $pathId): array
+    {
+        $path = RoutePath::where('id', $pathId)->where('route_id', $this->record->id)->first();
+        if (! $path) {
+            return $this->snapshot();
+        }
+        $this->currentPathId = $path->id;
+        return $this->snapshot($path);
+    }
+
+    public function activateVersion(int $pathId): array
+    {
+        $path = RoutePath::where('id', $pathId)->where('route_id', $this->record->id)->first();
+        if (! $path) {
+            return $this->snapshot();
+        }
+        $path->markActive();
+
+        Notification::make()->title("Activated {$path->version_name}")->success()->send();
+
+        return $this->snapshot($path->fresh());
+    }
+
+    public function deleteVersion(int $pathId): array
+    {
+        $path = RoutePath::where('id', $pathId)->where('route_id', $this->record->id)->first();
+        if (! $path) {
+            return $this->snapshot();
+        }
+
+        if ($path->is_active) {
+            Notification::make()
+                ->title('Cannot delete the active version')
+                ->body('Activate a different version first.')
+                ->danger()
+                ->send();
+            return $this->snapshot();
+        }
+
+        $wasLoaded = $this->currentPathId === $pathId;
+        $path->delete();
+
+        if ($wasLoaded) {
+            $this->currentPathId = $this->record->activePath()->value('id');
+        }
+
+        Notification::make()->title("Deleted {$path->version_name}")->success()->send();
+
+        return $this->snapshot();
+    }
+
+    public function renameVersion(int $pathId, string $newName): array
+    {
+        $newName = trim($newName);
+        if ($newName === '') {
+            return $this->snapshot();
+        }
+
+        $path = RoutePath::where('id', $pathId)->where('route_id', $this->record->id)->first();
+        if (! $path) {
+            return $this->snapshot();
+        }
+
+        $path->version_name = mb_substr($newName, 0, 128);
+        $path->save();
+
+        return $this->snapshot($path->fresh());
+    }
+
+    private function writePayload(RoutePath $path, array $payload): void
+    {
+        $stops = $payload['stops'] ?? [];
+        if (! is_array($stops)) {
+            $stops = [];
+        }
+        foreach ($stops as $i => &$s) {
+            $s['order'] = $i;
+        }
+        unset($s);
+
+        $versionName = trim($payload['version_name'] ?? '');
+        if ($versionName === '') {
+            $versionName = $path->version_name ?: 'v1';
+        }
+
+        $path->version_name = mb_substr($versionName, 0, 128);
+        $path->stops = $stops;
+        $path->geometry = $payload['geometry'] ?? null;
+        $path->distance_meters = isset($payload['distance_meters']) ? (int) $payload['distance_meters'] : null;
+        $path->duration_seconds = isset($payload['duration_seconds']) ? (int) $payload['duration_seconds'] : null;
+        $path->profile = $payload['profile'] ?? 'driving';
+    }
+
+    private function resolveNewVersionName(string $requested): string
+    {
+        $requested = trim($requested);
+        if ($requested !== '') {
+            return mb_substr($requested, 0, 128);
+        }
+
+        $existing = $this->record->paths()
+            ->pluck('version_name')
+            ->filter(fn ($n) => preg_match('/^v(\d+)$/', $n) === 1)
+            ->map(fn ($n) => (int) substr($n, 1))
+            ->all();
+
+        $next = $existing ? max($existing) + 1 : 1;
+        return "v{$next}";
+    }
+
     /** @return array<int, array{0: float, 1: float}> */
     private function extractCoordinates(array $stops): array
     {
@@ -189,40 +381,6 @@ class PlanRoute extends Page
             $out[] = [$lat, $lng];
         }
         return $out;
-    }
-
-    public function save(array $payload): void
-    {
-        $stops = $payload['stops'] ?? [];
-        $versionName = trim($payload['version_name'] ?? '') ?: 'v1';
-
-        if (! is_array($stops)) {
-            $stops = [];
-        }
-
-        // Re-number stop order to be deterministic on read
-        foreach ($stops as $i => &$stop) {
-            $stop['order'] = $i;
-        }
-        unset($stop);
-
-        $path = $this->record->activePath ?? new RoutePath(['route_id' => $this->record->id]);
-        $path->version_name = $versionName;
-        $path->stops = $stops;
-        $path->geometry = $payload['geometry'] ?? null;
-        $path->distance_meters = isset($payload['distance_meters']) ? (int) $payload['distance_meters'] : null;
-        $path->duration_seconds = isset($payload['duration_seconds']) ? (int) $payload['duration_seconds'] : null;
-        $path->profile = $payload['profile'] ?? 'driving';
-        $path->is_active = true;
-        $path->save();
-
-        $this->activePath = $path->fresh();
-
-        Notification::make()
-            ->title('Route saved')
-            ->body("Saved " . count($stops) . " stop" . (count($stops) === 1 ? '' : 's') . ".")
-            ->success()
-            ->send();
     }
 
     protected function getHeaderActions(): array
