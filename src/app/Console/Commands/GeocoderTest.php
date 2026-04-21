@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Services\NominatimGeocoder;
+use App\Services\Geocoder;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
@@ -11,7 +11,7 @@ use Illuminate\Console\Command;
 #[Description('Hit Nominatim with a single address and print the result or error. Use to verify the geocoder can reach the internet.')]
 class GeocoderTest extends Command
 {
-    public function handle(NominatimGeocoder $geocoder): int
+    public function handle(Geocoder $geocoder): int
     {
         $address = (string) $this->argument('address');
 

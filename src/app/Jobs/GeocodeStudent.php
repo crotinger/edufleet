@@ -3,7 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\Student;
-use App\Services\NominatimGeocoder;
+use App\Services\Geocoder;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable as FoundationQueueable;
@@ -24,7 +24,7 @@ class GeocodeStudent implements ShouldQueue
         public bool $force = false,
     ) {}
 
-    public function handle(NominatimGeocoder $geocoder): void
+    public function handle(Geocoder $geocoder): void
     {
         $student = Student::withTrashed()->find($this->studentId);
         if (! $student || ! filled($student->home_address)) {

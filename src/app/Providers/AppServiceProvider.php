@@ -2,6 +2,10 @@
 
 namespace App\Providers;
 
+use App\Services\CensusGeocoder;
+use App\Services\CompositeGeocoder;
+use App\Services\Geocoder;
+use App\Services\NominatimGeocoder;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -13,7 +17,15 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        // Geocoder: try US Census (TIGER — great rural US coverage, no API key)
+        // first, then fall back to Nominatim for anything Census can't resolve
+        // (mostly addresses outside the US).
+        $this->app->singleton(Geocoder::class, function () {
+            return new CompositeGeocoder(
+                new CensusGeocoder(),
+                new NominatimGeocoder(),
+            );
+        });
     }
 
     public function boot(): void

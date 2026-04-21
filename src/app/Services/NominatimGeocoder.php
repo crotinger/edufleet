@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Http;
  *   - Must set a meaningful User-Agent identifying the application
  *   - No heavy bulk use of the public instance — self-host for > hundreds of records
  */
-class NominatimGeocoder
+class NominatimGeocoder implements Geocoder
 {
     public function __construct(
         private readonly string $endpoint = 'https://nominatim.openstreetmap.org/search',
