@@ -16,10 +16,394 @@
 @endphp
 
 <x-filament-panels::page>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    {{-- Define the planner factory BEFORE the x-data consumer to avoid Alpine
+         evaluating routePlanner(...) before the definition script has run. --}}
+    <script>
+        window.routePlanner = function (config) {
+            return {
+                stops: (config.initialStops || []).map((s, i) => ({
+                    id: s.id || ('s' + Date.now() + '-' + i),
+                    name: s.name || ('Stop ' + (i + 1)),
+                    lat: parseFloat(s.lat),
+                    lng: parseFloat(s.lng),
+                    order: i,
+                    student_id: s.student_id ?? null,
+                })),
+                geometry: config.initialGeometry,
+                routeStudents: config.routeStudents || [],
+                versions: config.initialVersions || [],
+                currentPathId: config.initialCurrentPathId ?? null,
+                activePathId: config.initialActivePathId ?? null,
+                versionName: config.initialVersion || 'v1',
+                distanceMiles: config.initialDistanceM != null
+                    ? Math.round((config.initialDistanceM / 1609.344) * 100) / 100
+                    : null,
+                durationMinutes: config.initialDurationS != null
+                    ? Math.round(config.initialDurationS / 60)
+                    : null,
+                _distanceMeters: config.initialDistanceM ?? null,
+                _durationSeconds: config.initialDurationS ?? null,
+                map: null,
+                markers: [],
+                polyline: null,
+                busy: false,
+                busyLabel: '',
+
+                init() {
+                    if (typeof L === 'undefined') {
+                        console.error('[route-planner] Leaflet did not load');
+                        return;
+                    }
+                    this.map = L.map(this.$refs.map).setView([config.centerLat, config.centerLng], 13);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '&copy; OpenStreetMap contributors',
+                        maxZoom: 19,
+                    }).addTo(this.map);
+
+                    this.map.on('click', (e) => this.addStop(e.latlng.lat, e.latlng.lng));
+
+                    this.redrawMarkers();
+                    this.drawGeometry();
+                    this.fitToStops();
+
+                    // Force a size recalc once layout has settled — Filament's
+                    // grid/calc heights aren't guaranteed to be ready on first init.
+                    setTimeout(() => this.map?.invalidateSize(), 80);
+                    setTimeout(() => this.map?.invalidateSize(), 400);
+                },
+
+                /** Apply a full server-side state snapshot (replaces everything). */
+                applyState(state) {
+                    if (!state) return;
+                    this.stops = (state.stops || []).map((s, i) => ({
+                        id: s.id || ('s' + Date.now() + '-' + i),
+                        name: s.name || ('Stop ' + (i + 1)),
+                        lat: parseFloat(s.lat),
+                        lng: parseFloat(s.lng),
+                        order: i,
+                        student_id: s.student_id ?? null,
+                    }));
+                    this.geometry = state.geometry || null;
+                    this._distanceMeters = state.distance_meters ?? null;
+                    this._durationSeconds = state.duration_seconds ?? null;
+                    this.distanceMiles = this._distanceMeters != null
+                        ? Math.round((this._distanceMeters / 1609.344) * 100) / 100
+                        : null;
+                    this.durationMinutes = this._durationSeconds != null
+                        ? Math.round(this._durationSeconds / 60)
+                        : null;
+                    this.versionName = state.version_name || 'v1';
+                    this.currentPathId = state.current_path_id ?? null;
+                    this.activePathId = state.active_path_id ?? null;
+                    this.versions = state.versions || [];
+                    this.redrawMarkers();
+                    this.drawGeometry();
+                },
+
+                addStop(lat, lng) {
+                    const id = 's' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+                    this.stops.push({
+                        id,
+                        name: 'Stop ' + (this.stops.length + 1),
+                        lat: lat,
+                        lng: lng,
+                        order: this.stops.length,
+                        student_id: null,
+                    });
+                    this.redrawMarkers();
+                    this.invalidateRouting();
+                },
+
+                removeStop(i) {
+                    this.stops.splice(i, 1);
+                    this.redrawMarkers();
+                    this.invalidateRouting();
+                },
+
+                clearStops() {
+                    if (this.stops.length === 0) return;
+                    if (!confirm('Remove all stops from this version?')) return;
+                    this.stops = [];
+                    this.invalidateRouting();
+                    this.redrawMarkers();
+                },
+
+                invalidateRouting() {
+                    this.geometry = null;
+                    this.distanceMiles = null;
+                    this.durationMinutes = null;
+                    this._distanceMeters = null;
+                    this._durationSeconds = null;
+                    this.drawGeometry();
+                },
+
+                redrawMarkers() {
+                    if (!this.map) return;
+                    this.markers.forEach(m => this.map.removeLayer(m));
+                    this.markers = [];
+                    this.stops.forEach((stop, i) => {
+                        const m = L.marker([stop.lat, stop.lng], { draggable: true })
+                            .addTo(this.map)
+                            .bindTooltip((i + 1) + '. ' + stop.name, { permanent: true, direction: 'right' });
+                        m.on('dragend', (e) => {
+                            const ll = e.target.getLatLng();
+                            stop.lat = ll.lat;
+                            stop.lng = ll.lng;
+                            this.invalidateRouting();
+                        });
+                        m.on('click', () => {
+                            if (confirm('Remove ' + stop.name + '?')) this.removeStop(i);
+                        });
+                        this.markers.push(m);
+                    });
+                },
+
+                drawGeometry() {
+                    if (!this.map) return;
+                    if (this.polyline) {
+                        this.map.removeLayer(this.polyline);
+                        this.polyline = null;
+                    }
+                    if (this.geometry && Array.isArray(this.geometry.coordinates)) {
+                        const coords = this.geometry.coordinates.map(c => [c[1], c[0]]);
+                        this.polyline = L.polyline(coords, { color: '#3b82f6', weight: 4, opacity: 0.8 }).addTo(this.map);
+                    }
+                },
+
+                fitToStops() {
+                    if (!this.map || this.stops.length === 0) return;
+                    const bounds = L.latLngBounds(this.stops.map(s => [s.lat, s.lng]));
+                    this.map.fitBounds(bounds, { maxZoom: 15, padding: [40, 40] });
+                },
+
+                isStudentAdded(student) {
+                    return this.stops.some(s => s.student_id === student.id);
+                },
+
+                unaddedStudentCount() {
+                    const added = new Set(this.stops.map(s => s.student_id).filter(id => id != null));
+                    return this.routeStudents.filter(s => !added.has(s.id)).length;
+                },
+
+                addStudent(student) {
+                    if (this.isStudentAdded(student)) return;
+                    this.stops.push({
+                        id: 'student-' + student.id + '-' + Date.now(),
+                        name: student.name,
+                        lat: student.lat,
+                        lng: student.lng,
+                        order: this.stops.length,
+                        student_id: student.id,
+                    });
+                    this.redrawMarkers();
+                    this.invalidateRouting();
+                },
+
+                addAllStudents() {
+                    const added = new Set(this.stops.map(s => s.student_id).filter(id => id != null));
+                    let n = 0;
+                    this.routeStudents.forEach(student => {
+                        if (added.has(student.id)) return;
+                        this.stops.push({
+                            id: 'student-' + student.id + '-' + Date.now() + '-' + n,
+                            name: student.name,
+                            lat: student.lat,
+                            lng: student.lng,
+                            order: this.stops.length,
+                            student_id: student.id,
+                        });
+                        n++;
+                    });
+                    if (n > 0) {
+                        this.redrawMarkers();
+                        this.fitToStops();
+                        this.invalidateRouting();
+                    }
+                },
+
+                _flashCircle: null,
+
+                flashStudent(student) {
+                    if (!this.map) return;
+                    if (this._flashCircle) this.map.removeLayer(this._flashCircle);
+                    this._flashCircle = L.circleMarker([student.lat, student.lng], {
+                        radius: 8,
+                        color: '#f59e0b',
+                        weight: 3,
+                        fillColor: '#fbbf24',
+                        fillOpacity: 0.5,
+                    }).addTo(this.map);
+                    clearTimeout(this._flashTimer);
+                    this._flashTimer = setTimeout(() => {
+                        if (this._flashCircle) {
+                            this.map.removeLayer(this._flashCircle);
+                            this._flashCircle = null;
+                        }
+                    }, 1200);
+                },
+
+                serializeStops() {
+                    return this.stops.map((s, i) => ({
+                        id: s.id,
+                        name: s.name,
+                        lat: s.lat,
+                        lng: s.lng,
+                        order: i,
+                        student_id: s.student_id,
+                    }));
+                },
+
+                _payload() {
+                    return {
+                        version_name: this.versionName,
+                        stops: this.serializeStops(),
+                        geometry: this.geometry,
+                        distance_meters: this._distanceMeters,
+                        duration_seconds: this._durationSeconds,
+                        profile: 'driving',
+                    };
+                },
+
+                applyRoutingResult(result) {
+                    if (!result) return;
+                    this.geometry = result.geometry || null;
+                    this._distanceMeters = result.distance_meters ?? null;
+                    this._durationSeconds = result.duration_seconds ?? null;
+                    this.distanceMiles = this._distanceMeters != null
+                        ? Math.round((this._distanceMeters / 1609.344) * 100) / 100
+                        : null;
+                    this.durationMinutes = this._durationSeconds != null
+                        ? Math.round(this._durationSeconds / 60)
+                        : null;
+                    this.drawGeometry();
+                },
+
+                async recalculate() {
+                    if (this.stops.length < 2) return;
+                    this.busy = true;
+                    this.busyLabel = 'Recalculating';
+                    try {
+                        const result = await @this.call('recalculate', this.serializeStops());
+                        this.applyRoutingResult(result);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async optimize() {
+                    if (this.stops.length < 3) return;
+                    this.busy = true;
+                    this.busyLabel = 'Optimizing';
+                    try {
+                        const result = await @this.call('optimize', this.serializeStops());
+                        if (result && Array.isArray(result.stops) && result.stops.length > 0) {
+                            this.stops = result.stops.map(s => ({
+                                id: s.id,
+                                name: s.name,
+                                lat: parseFloat(s.lat),
+                                lng: parseFloat(s.lng),
+                                order: s.order,
+                                student_id: s.student_id ?? null,
+                            }));
+                            this.redrawMarkers();
+                        }
+                        this.applyRoutingResult(result);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async save() {
+                    this.busy = true;
+                    this.busyLabel = 'Saving';
+                    try {
+                        const state = await @this.call('save', this._payload());
+                        this.applyState(state);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async saveAsNew() {
+                    if (this.stops.length === 0) return;
+                    this.busy = true;
+                    this.busyLabel = 'SavingAsNew';
+                    const payload = this._payload();
+                    payload.version_name = '';
+                    try {
+                        const state = await @this.call('saveAsNewVersion', payload);
+                        this.applyState(state);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async loadVersion(id) {
+                    if (id === this.currentPathId) return;
+                    if (this.stops.length > 0 && !confirm('Discard current edits and load this version?')) return;
+                    this.busy = true;
+                    this.busyLabel = 'Loading';
+                    try {
+                        const state = await @this.call('loadVersion', id);
+                        this.applyState(state);
+                        this.fitToStops();
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async activateVersion(id) {
+                    this.busy = true;
+                    this.busyLabel = 'Activating';
+                    try {
+                        const state = await @this.call('activateVersion', id);
+                        this.applyState(state);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async deleteVersionConfirm(v) {
+                    if (v.is_active) return;
+                    if (!confirm('Delete version "' + v.version_name + '"?')) return;
+                    this.busy = true;
+                    this.busyLabel = 'Deleting';
+                    try {
+                        const state = await @this.call('deleteVersion', v.id);
+                        this.applyState(state);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async renameVersionPrompt(v) {
+                    const next = prompt('Rename version:', v.version_name);
+                    if (next === null) return;
+                    const trimmed = next.trim();
+                    if (trimmed === '' || trimmed === v.version_name) return;
+                    this.busy = true;
+                    this.busyLabel = 'Renaming';
+                    try {
+                        const state = await @this.call('renameVersion', v.id, trimmed);
+                        this.applyState(state);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+            };
+        };
+    </script>
 
     <div
         x-data="routePlanner({
@@ -215,380 +599,9 @@
         </div>
 
         {{-- Map --}}
-        <div wire:ignore class="rounded-lg overflow-hidden border border-gray-200 dark:border-white/10 bg-gray-100">
-            <div x-ref="map" style="width:100%;height:100%"></div>
+        <div wire:ignore class="rounded-lg overflow-hidden border border-gray-200 dark:border-white/10 bg-gray-100"
+             style="min-height: 520px;">
+            <div x-ref="map" style="width:100%;height:100%;min-height:520px;"></div>
         </div>
     </div>
-
-    <script>
-        window.routePlanner = function (config) {
-            return {
-                stops: (config.initialStops || []).map((s, i) => ({
-                    id: s.id || ('s' + Date.now() + '-' + i),
-                    name: s.name || ('Stop ' + (i + 1)),
-                    lat: parseFloat(s.lat),
-                    lng: parseFloat(s.lng),
-                    order: i,
-                    student_id: s.student_id ?? null,
-                })),
-                geometry: config.initialGeometry,
-                routeStudents: config.routeStudents || [],
-                versions: config.initialVersions || [],
-                currentPathId: config.initialCurrentPathId ?? null,
-                activePathId: config.initialActivePathId ?? null,
-                versionName: config.initialVersion || 'v1',
-                distanceMiles: config.initialDistanceM != null
-                    ? Math.round((config.initialDistanceM / 1609.344) * 100) / 100
-                    : null,
-                durationMinutes: config.initialDurationS != null
-                    ? Math.round(config.initialDurationS / 60)
-                    : null,
-                _distanceMeters: config.initialDistanceM ?? null,
-                _durationSeconds: config.initialDurationS ?? null,
-                map: null,
-                markers: [],
-                polyline: null,
-                busy: false,
-                busyLabel: '',
-
-                init() {
-                    this.map = L.map(this.$refs.map).setView([config.centerLat, config.centerLng], 13);
-                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                        attribution: '&copy; OpenStreetMap contributors',
-                        maxZoom: 19,
-                    }).addTo(this.map);
-
-                    this.map.on('click', (e) => this.addStop(e.latlng.lat, e.latlng.lng));
-
-                    this.redrawMarkers();
-                    this.drawGeometry();
-                    this.fitToStops();
-                },
-
-                /** Apply a full server-side state snapshot (replaces everything). */
-                applyState(state) {
-                    if (!state) return;
-                    this.stops = (state.stops || []).map((s, i) => ({
-                        id: s.id || ('s' + Date.now() + '-' + i),
-                        name: s.name || ('Stop ' + (i + 1)),
-                        lat: parseFloat(s.lat),
-                        lng: parseFloat(s.lng),
-                        order: i,
-                        student_id: s.student_id ?? null,
-                    }));
-                    this.geometry = state.geometry || null;
-                    this._distanceMeters = state.distance_meters ?? null;
-                    this._durationSeconds = state.duration_seconds ?? null;
-                    this.distanceMiles = this._distanceMeters != null
-                        ? Math.round((this._distanceMeters / 1609.344) * 100) / 100
-                        : null;
-                    this.durationMinutes = this._durationSeconds != null
-                        ? Math.round(this._durationSeconds / 60)
-                        : null;
-                    this.versionName = state.version_name || 'v1';
-                    this.currentPathId = state.current_path_id ?? null;
-                    this.activePathId = state.active_path_id ?? null;
-                    this.versions = state.versions || [];
-                    this.redrawMarkers();
-                    this.drawGeometry();
-                },
-
-                addStop(lat, lng) {
-                    const id = 's' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-                    this.stops.push({
-                        id,
-                        name: 'Stop ' + (this.stops.length + 1),
-                        lat: lat,
-                        lng: lng,
-                        order: this.stops.length,
-                        student_id: null,
-                    });
-                    this.redrawMarkers();
-                    this.invalidateRouting();
-                },
-
-                removeStop(i) {
-                    this.stops.splice(i, 1);
-                    this.redrawMarkers();
-                    this.invalidateRouting();
-                },
-
-                clearStops() {
-                    if (this.stops.length === 0) return;
-                    if (!confirm('Remove all stops from this version?')) return;
-                    this.stops = [];
-                    this.invalidateRouting();
-                    this.redrawMarkers();
-                },
-
-                invalidateRouting() {
-                    this.geometry = null;
-                    this.distanceMiles = null;
-                    this.durationMinutes = null;
-                    this._distanceMeters = null;
-                    this._durationSeconds = null;
-                    this.drawGeometry();
-                },
-
-                redrawMarkers() {
-                    this.markers.forEach(m => this.map.removeLayer(m));
-                    this.markers = [];
-                    this.stops.forEach((stop, i) => {
-                        const m = L.marker([stop.lat, stop.lng], { draggable: true })
-                            .addTo(this.map)
-                            .bindTooltip((i + 1) + '. ' + stop.name, { permanent: true, direction: 'right' });
-                        m.on('dragend', (e) => {
-                            const ll = e.target.getLatLng();
-                            stop.lat = ll.lat;
-                            stop.lng = ll.lng;
-                            this.invalidateRouting();
-                        });
-                        m.on('click', () => {
-                            if (confirm('Remove ' + stop.name + '?')) this.removeStop(i);
-                        });
-                        this.markers.push(m);
-                    });
-                },
-
-                drawGeometry() {
-                    if (this.polyline) {
-                        this.map.removeLayer(this.polyline);
-                        this.polyline = null;
-                    }
-                    if (this.geometry && Array.isArray(this.geometry.coordinates)) {
-                        const coords = this.geometry.coordinates.map(c => [c[1], c[0]]);
-                        this.polyline = L.polyline(coords, { color: '#3b82f6', weight: 4, opacity: 0.8 }).addTo(this.map);
-                    }
-                },
-
-                fitToStops() {
-                    if (this.stops.length === 0) return;
-                    const bounds = L.latLngBounds(this.stops.map(s => [s.lat, s.lng]));
-                    this.map.fitBounds(bounds, { maxZoom: 15, padding: [40, 40] });
-                },
-
-                isStudentAdded(student) {
-                    return this.stops.some(s => s.student_id === student.id);
-                },
-
-                unaddedStudentCount() {
-                    const added = new Set(this.stops.map(s => s.student_id).filter(id => id != null));
-                    return this.routeStudents.filter(s => !added.has(s.id)).length;
-                },
-
-                addStudent(student) {
-                    if (this.isStudentAdded(student)) return;
-                    this.stops.push({
-                        id: 'student-' + student.id + '-' + Date.now(),
-                        name: student.name,
-                        lat: student.lat,
-                        lng: student.lng,
-                        order: this.stops.length,
-                        student_id: student.id,
-                    });
-                    this.redrawMarkers();
-                    this.invalidateRouting();
-                },
-
-                addAllStudents() {
-                    const added = new Set(this.stops.map(s => s.student_id).filter(id => id != null));
-                    let n = 0;
-                    this.routeStudents.forEach(student => {
-                        if (added.has(student.id)) return;
-                        this.stops.push({
-                            id: 'student-' + student.id + '-' + Date.now() + '-' + n,
-                            name: student.name,
-                            lat: student.lat,
-                            lng: student.lng,
-                            order: this.stops.length,
-                            student_id: student.id,
-                        });
-                        n++;
-                    });
-                    if (n > 0) {
-                        this.redrawMarkers();
-                        this.fitToStops();
-                        this.invalidateRouting();
-                    }
-                },
-
-                _flashCircle: null,
-
-                flashStudent(student) {
-                    if (this._flashCircle) this.map.removeLayer(this._flashCircle);
-                    this._flashCircle = L.circleMarker([student.lat, student.lng], {
-                        radius: 8,
-                        color: '#f59e0b',
-                        weight: 3,
-                        fillColor: '#fbbf24',
-                        fillOpacity: 0.5,
-                    }).addTo(this.map);
-                    clearTimeout(this._flashTimer);
-                    this._flashTimer = setTimeout(() => {
-                        if (this._flashCircle) {
-                            this.map.removeLayer(this._flashCircle);
-                            this._flashCircle = null;
-                        }
-                    }, 1200);
-                },
-
-                serializeStops() {
-                    return this.stops.map((s, i) => ({
-                        id: s.id,
-                        name: s.name,
-                        lat: s.lat,
-                        lng: s.lng,
-                        order: i,
-                        student_id: s.student_id,
-                    }));
-                },
-
-                _payload() {
-                    return {
-                        version_name: this.versionName,
-                        stops: this.serializeStops(),
-                        geometry: this.geometry,
-                        distance_meters: this._distanceMeters,
-                        duration_seconds: this._durationSeconds,
-                        profile: 'driving',
-                    };
-                },
-
-                applyRoutingResult(result) {
-                    if (!result) return;
-                    this.geometry = result.geometry || null;
-                    this._distanceMeters = result.distance_meters ?? null;
-                    this._durationSeconds = result.duration_seconds ?? null;
-                    this.distanceMiles = this._distanceMeters != null
-                        ? Math.round((this._distanceMeters / 1609.344) * 100) / 100
-                        : null;
-                    this.durationMinutes = this._durationSeconds != null
-                        ? Math.round(this._durationSeconds / 60)
-                        : null;
-                    this.drawGeometry();
-                },
-
-                async recalculate() {
-                    if (this.stops.length < 2) return;
-                    this.busy = true;
-                    this.busyLabel = 'Recalculating';
-                    try {
-                        const result = await @this.call('recalculate', this.serializeStops());
-                        this.applyRoutingResult(result);
-                    } finally {
-                        this.busy = false;
-                        this.busyLabel = '';
-                    }
-                },
-
-                async optimize() {
-                    if (this.stops.length < 3) return;
-                    this.busy = true;
-                    this.busyLabel = 'Optimizing';
-                    try {
-                        const result = await @this.call('optimize', this.serializeStops());
-                        if (result && Array.isArray(result.stops) && result.stops.length > 0) {
-                            this.stops = result.stops.map(s => ({
-                                id: s.id,
-                                name: s.name,
-                                lat: parseFloat(s.lat),
-                                lng: parseFloat(s.lng),
-                                order: s.order,
-                                student_id: s.student_id ?? null,
-                            }));
-                            this.redrawMarkers();
-                        }
-                        this.applyRoutingResult(result);
-                    } finally {
-                        this.busy = false;
-                        this.busyLabel = '';
-                    }
-                },
-
-                async save() {
-                    this.busy = true;
-                    this.busyLabel = 'Saving';
-                    try {
-                        const state = await @this.call('save', this._payload());
-                        this.applyState(state);
-                    } finally {
-                        this.busy = false;
-                        this.busyLabel = '';
-                    }
-                },
-
-                async saveAsNew() {
-                    if (this.stops.length === 0) return;
-                    this.busy = true;
-                    this.busyLabel = 'SavingAsNew';
-                    const payload = this._payload();
-                    payload.version_name = ''; // let server assign "vN"
-                    try {
-                        const state = await @this.call('saveAsNewVersion', payload);
-                        this.applyState(state);
-                    } finally {
-                        this.busy = false;
-                        this.busyLabel = '';
-                    }
-                },
-
-                async loadVersion(id) {
-                    if (id === this.currentPathId) return;
-                    if (this.stops.length > 0 && !confirm('Discard current edits and load this version?')) return;
-                    this.busy = true;
-                    this.busyLabel = 'Loading';
-                    try {
-                        const state = await @this.call('loadVersion', id);
-                        this.applyState(state);
-                        this.fitToStops();
-                    } finally {
-                        this.busy = false;
-                        this.busyLabel = '';
-                    }
-                },
-
-                async activateVersion(id) {
-                    this.busy = true;
-                    this.busyLabel = 'Activating';
-                    try {
-                        const state = await @this.call('activateVersion', id);
-                        this.applyState(state);
-                    } finally {
-                        this.busy = false;
-                        this.busyLabel = '';
-                    }
-                },
-
-                async deleteVersionConfirm(v) {
-                    if (v.is_active) return;
-                    if (!confirm('Delete version "' + v.version_name + '"?')) return;
-                    this.busy = true;
-                    this.busyLabel = 'Deleting';
-                    try {
-                        const state = await @this.call('deleteVersion', v.id);
-                        this.applyState(state);
-                    } finally {
-                        this.busy = false;
-                        this.busyLabel = '';
-                    }
-                },
-
-                async renameVersionPrompt(v) {
-                    const next = prompt('Rename version:', v.version_name);
-                    if (next === null) return;
-                    const trimmed = next.trim();
-                    if (trimmed === '' || trimmed === v.version_name) return;
-                    this.busy = true;
-                    this.busyLabel = 'Renaming';
-                    try {
-                        const state = await @this.call('renameVersion', v.id, trimmed);
-                        this.applyState(state);
-                    } finally {
-                        this.busy = false;
-                        this.busyLabel = '';
-                    }
-                },
-            };
-        };
-    </script>
 </x-filament-panels::page>
