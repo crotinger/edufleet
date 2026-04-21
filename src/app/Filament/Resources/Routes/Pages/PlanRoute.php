@@ -6,6 +6,7 @@ use App\Filament\Resources\Routes\RouteResource;
 use App\Models\Route;
 use App\Models\RoutePath;
 use App\Models\Student;
+use App\Services\OsrmClient;
 use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\Page;
@@ -59,6 +60,115 @@ class PlanRoute extends Page
 
         // US geographic center as last-resort fallback
         return [39.8283, -98.5795];
+    }
+
+    /**
+     * Trace the route through the given stops in the given order. Returns
+     * geometry + distance + duration (nulls on failure).
+     *
+     * @param array<int, array{lat: float|string, lng: float|string, name?: string}> $stops
+     * @return array{geometry: array|null, distance_meters: int|null, duration_seconds: int|null}
+     */
+    public function recalculate(array $stops): array
+    {
+        $coords = $this->extractCoordinates($stops);
+        if (count($coords) < 2) {
+            Notification::make()->title('At least two stops are needed to trace a route.')->warning()->send();
+            return ['geometry' => null, 'distance_meters' => null, 'duration_seconds' => null];
+        }
+
+        $result = app(OsrmClient::class)->route($coords);
+        if ($result === null) {
+            Notification::make()->title('Routing failed')->body('OSRM did not return a route. Try again.')->danger()->send();
+            return ['geometry' => null, 'distance_meters' => null, 'duration_seconds' => null];
+        }
+
+        Notification::make()
+            ->title('Route calculated')
+            ->body(round($result['distance_meters'] / 1609.344, 2) . ' mi, ' . (int) round($result['duration_seconds'] / 60) . ' min.')
+            ->success()
+            ->send();
+
+        return $result;
+    }
+
+    /**
+     * Solve the TSP over the given stops. Returns reordered stops plus the
+     * traced geometry and totals.
+     *
+     * @param array<int, array> $stops
+     * @return array{stops: array, geometry: array|null, distance_meters: int|null, duration_seconds: int|null}
+     */
+    public function optimize(array $stops): array
+    {
+        $coords = $this->extractCoordinates($stops);
+        if (count($coords) < 3) {
+            Notification::make()
+                ->title('Nothing to optimize')
+                ->body('Add at least three stops before optimizing order.')
+                ->warning()
+                ->send();
+            return [
+                'stops' => $stops,
+                'geometry' => null,
+                'distance_meters' => null,
+                'duration_seconds' => null,
+            ];
+        }
+
+        // Keep first + last as anchors (depot → school), solve middle.
+        $result = app(OsrmClient::class)->trip($coords, source: 'first', destination: 'last', roundtrip: false);
+
+        if ($result === null || empty($result['order'])) {
+            Notification::make()->title('Optimization failed')->body('OSRM did not return an optimized order.')->danger()->send();
+            return [
+                'stops' => $stops,
+                'geometry' => null,
+                'distance_meters' => null,
+                'duration_seconds' => null,
+            ];
+        }
+
+        $reordered = [];
+        foreach ($result['order'] as $visitIndex => $originalIndex) {
+            if (! isset($stops[$originalIndex])) {
+                continue;
+            }
+            $stop = $stops[$originalIndex];
+            $stop['order'] = $visitIndex;
+            $reordered[] = $stop;
+        }
+
+        Notification::make()
+            ->title('Optimized order')
+            ->body(round($result['distance_meters'] / 1609.344, 2) . ' mi, ' . (int) round($result['duration_seconds'] / 60) . ' min — hit Save to keep.')
+            ->success()
+            ->send();
+
+        return [
+            'stops' => $reordered,
+            'geometry' => $result['geometry'],
+            'distance_meters' => $result['distance_meters'],
+            'duration_seconds' => $result['duration_seconds'],
+        ];
+    }
+
+    /** @return array<int, array{0: float, 1: float}> */
+    private function extractCoordinates(array $stops): array
+    {
+        $out = [];
+        foreach ($stops as $s) {
+            if (! isset($s['lat'], $s['lng'])) {
+                continue;
+            }
+            $lat = is_numeric($s['lat']) ? (float) $s['lat'] : null;
+            $lng = is_numeric($s['lng']) ? (float) $s['lng'] : null;
+            if ($lat === null || $lng === null) {
+                continue;
+            }
+            $out[] = [$lat, $lng];
+        }
+        return $out;
     }
 
     public function save(array $payload): void

@@ -87,11 +87,23 @@
             </div>
 
             <div class="flex flex-col gap-2">
+                <button type="button" @click="recalculate()"
+                        :disabled="busy || stops.length < 2"
+                        class="rounded-lg border border-gray-300 dark:border-white/10 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-50">
+                    <span x-show="!busy || busyLabel !== 'Recalculating'">Recalculate</span>
+                    <span x-show="busy && busyLabel === 'Recalculating'">Recalculating…</span>
+                </button>
+                <button type="button" @click="optimize()"
+                        :disabled="busy || stops.length < 3"
+                        class="rounded-lg border border-info-300 dark:border-info-500/30 bg-info-50 dark:bg-info-500/10 text-info-700 dark:text-info-300 px-3 py-2 text-sm font-medium hover:bg-info-100 dark:hover:bg-info-500/20 disabled:opacity-50">
+                    <span x-show="!busy || busyLabel !== 'Optimizing'">Optimize order</span>
+                    <span x-show="busy && busyLabel === 'Optimizing'">Optimizing…</span>
+                </button>
                 <button type="button" @click="save()"
-                        :disabled="saving"
-                        class="fi-btn fi-btn-color-primary rounded-lg bg-primary-600 text-white px-3 py-2 text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
-                    <span x-show="!saving">Save</span>
-                    <span x-show="saving">Saving…</span>
+                        :disabled="busy"
+                        class="rounded-lg bg-primary-600 text-white px-3 py-2 text-sm font-medium hover:bg-primary-700 disabled:opacity-50">
+                    <span x-show="!busy || busyLabel !== 'Saving'">Save</span>
+                    <span x-show="busy && busyLabel === 'Saving'">Saving…</span>
                 </button>
             </div>
         </div>
@@ -126,7 +138,8 @@
                 map: null,
                 markers: [],
                 polyline: null,
-                saving: false,
+                busy: false,
+                busyLabel: '',
 
                 init() {
                     this.map = L.map(this.$refs.map).setView([config.centerLat, config.centerLng], 13);
@@ -219,24 +232,85 @@
                     this.map.fitBounds(bounds, { maxZoom: 15, padding: [40, 40] });
                 },
 
-                save() {
-                    this.saving = true;
+                serializeStops() {
+                    return this.stops.map((s, i) => ({
+                        id: s.id,
+                        name: s.name,
+                        lat: s.lat,
+                        lng: s.lng,
+                        order: i,
+                        student_id: s.student_id,
+                    }));
+                },
+
+                applyRoutingResult(result) {
+                    if (!result) return;
+                    this.geometry = result.geometry || null;
+                    this._distanceMeters = result.distance_meters ?? null;
+                    this._durationSeconds = result.duration_seconds ?? null;
+                    this.distanceMiles = this._distanceMeters != null
+                        ? Math.round((this._distanceMeters / 1609.344) * 100) / 100
+                        : null;
+                    this.durationMinutes = this._durationSeconds != null
+                        ? Math.round(this._durationSeconds / 60)
+                        : null;
+                    this.drawGeometry();
+                },
+
+                async recalculate() {
+                    if (this.stops.length < 2) return;
+                    this.busy = true;
+                    this.busyLabel = 'Recalculating';
+                    try {
+                        const result = await @this.call('recalculate', this.serializeStops());
+                        this.applyRoutingResult(result);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async optimize() {
+                    if (this.stops.length < 3) return;
+                    this.busy = true;
+                    this.busyLabel = 'Optimizing';
+                    try {
+                        const result = await @this.call('optimize', this.serializeStops());
+                        if (result && Array.isArray(result.stops) && result.stops.length > 0) {
+                            this.stops = result.stops.map(s => ({
+                                id: s.id,
+                                name: s.name,
+                                lat: parseFloat(s.lat),
+                                lng: parseFloat(s.lng),
+                                order: s.order,
+                                student_id: s.student_id ?? null,
+                            }));
+                            this.redrawMarkers();
+                        }
+                        this.applyRoutingResult(result);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
+                },
+
+                async save() {
+                    this.busy = true;
+                    this.busyLabel = 'Saving';
                     const payload = {
                         version_name: this.versionName,
-                        stops: this.stops.map((s, i) => ({
-                            id: s.id,
-                            name: s.name,
-                            lat: s.lat,
-                            lng: s.lng,
-                            order: i,
-                            student_id: s.student_id,
-                        })),
+                        stops: this.serializeStops(),
                         geometry: this.geometry,
                         distance_meters: this._distanceMeters,
                         duration_seconds: this._durationSeconds,
                         profile: 'driving',
                     };
-                    @this.call('save', payload).finally(() => this.saving = false);
+                    try {
+                        await @this.call('save', payload);
+                    } finally {
+                        this.busy = false;
+                        this.busyLabel = '';
+                    }
                 },
             };
         };
