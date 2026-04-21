@@ -23,9 +23,11 @@ class PlanRoute extends Page
     /** Version currently loaded in the editor (null = unsaved draft). */
     public ?int $currentPathId = null;
 
-    public function mount(int|string $record): void
+    public function mount(int|string|Route $record): void
     {
-        $this->record = Route::findOrFail($record);
+        $this->record = $record instanceof Route
+            ? $record
+            : Route::findOrFail($record);
         $this->currentPathId = $this->record->activePath?->id;
     }
 
