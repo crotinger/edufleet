@@ -6,6 +6,7 @@ use App\Filament\Concerns\AuthorizesViaSpatie;
 use App\Filament\Resources\Routes\Pages\CreateRoute;
 use App\Filament\Resources\Routes\Pages\EditRoute;
 use App\Filament\Resources\Routes\Pages\ListRoutes;
+use App\Filament\Resources\Routes\Pages\PlanRoute;
 use App\Filament\Resources\Routes\Schemas\RouteForm;
 use App\Filament\Resources\Routes\Tables\RoutesTable;
 use App\Models\Route;
@@ -57,6 +58,7 @@ class RouteResource extends Resource
             'index' => ListRoutes::route('/'),
             'create' => CreateRoute::route('/create'),
             'edit' => EditRoute::route('/{record}/edit'),
+            'plan' => PlanRoute::route('/{record}/plan'),
         ];
     }
 
