@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\Activitylog\Support\LogOptions;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
@@ -60,6 +61,16 @@ class Route extends Model
         return $this->belongsToMany(Student::class)
             ->withPivot(['direction', 'notes'])
             ->withTimestamps();
+    }
+
+    public function paths(): HasMany
+    {
+        return $this->hasMany(RoutePath::class);
+    }
+
+    public function activePath(): HasOne
+    {
+        return $this->hasOne(RoutePath::class)->where('is_active', true);
     }
 
     public static function statuses(): array
