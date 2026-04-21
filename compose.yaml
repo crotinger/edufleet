@@ -23,6 +23,22 @@ services:
         condition: service_started
     networks: [edufleet]
 
+  worker:
+    build:
+      context: .
+      dockerfile: docker/app/Dockerfile
+    container_name: edufleet-worker
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "--tries=3", "--max-time=3600", "--sleep=1"]
+    volumes:
+      - ./src:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks: [edufleet]
+
   db:
     image: postgres:16-alpine
     container_name: edufleet-db
