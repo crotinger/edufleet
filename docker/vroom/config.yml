@@ -1,4 +1,5 @@
 cliArgs:
+  baseurl: '/'
   limit: '1mb'
   logdir: '/logs/'
   maxLocations: '1000'
