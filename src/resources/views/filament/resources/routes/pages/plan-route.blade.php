@@ -600,7 +600,7 @@
 
         {{-- Map --}}
         <div wire:ignore class="rounded-lg overflow-hidden border border-gray-200 dark:border-white/10 bg-gray-100"
-             style="min-height: 520px;">
+             style="min-height: 520px; position:relative; z-index:0; isolation:isolate;">
             <div x-ref="map" style="width:100%;height:100%;min-height:520px;"></div>
         </div>
     </div>

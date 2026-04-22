@@ -37,6 +37,11 @@
             border: 1px solid rgb(229 231 235 / 0.6);
             background: #f3f4f6;
             min-height: 560px;
+            /* Isolate Leaflet's internal z-indexes (panes up to 700,
+               controls up to 800) so Filament modals/popovers stay on top. */
+            position: relative;
+            z-index: 0;
+            isolation: isolate;
         }
         .dark .ro-map-shell { border-color: rgb(255 255 255 / 0.1); }
         .ro-vlist { max-height: 20rem; overflow-y: auto; margin: 0; padding: 0; list-style: none; }

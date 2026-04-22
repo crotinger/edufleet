@@ -6,7 +6,7 @@
     x-init="init()"
     wire:ignore
 >
-    <div x-ref="map" style="width:100%;height:280px;min-height:280px;"
+    <div x-ref="map" style="width:100%;height:280px;min-height:280px;position:relative;z-index:0;isolation:isolate;"
          class="rounded border border-gray-200 dark:border-white/10 overflow-hidden"></div>
     <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
         Click on the map to set the depot, or drag the marker to reposition.
