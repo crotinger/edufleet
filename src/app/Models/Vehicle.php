@@ -125,4 +125,14 @@ class Vehicle extends Model
             ->whereIn('status', [TripReservation::STATUS_RESERVED, TripReservation::STATUS_CLAIMED])
             ->oldestOfMany('issued_at');
     }
+
+    public function preTripInspections(): HasMany
+    {
+        return $this->hasMany(PreTripInspection::class);
+    }
+
+    public function latestPreTripInspection(): HasOne
+    {
+        return $this->hasOne(PreTripInspection::class)->latestOfMany('started_at');
+    }
 }
