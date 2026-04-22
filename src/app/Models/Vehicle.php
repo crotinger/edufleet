@@ -41,7 +41,14 @@ class Vehicle extends Model
             'year' => 'integer',
             'odometer_miles' => 'integer',
             'capacity_passengers' => 'integer',
+            'default_depot_lat' => 'float',
+            'default_depot_lng' => 'float',
         ];
+    }
+
+    public function hasDepot(): bool
+    {
+        return $this->default_depot_lat !== null && $this->default_depot_lng !== null;
     }
 
     public static function types(): array

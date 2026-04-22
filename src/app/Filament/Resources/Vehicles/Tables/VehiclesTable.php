@@ -7,6 +7,8 @@ use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Actions\ForceDeleteBulkAction;
 use Filament\Actions\RestoreBulkAction;
+use App\Models\Vehicle;
+use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\TrashedFilter;
 use Filament\Tables\Table;
@@ -48,6 +50,14 @@ class VehiclesTable
                 TextColumn::make('retired_on')
                     ->date()
                     ->sortable(),
+                IconColumn::make('has_depot')
+                    ->label('Depot')
+                    ->tooltip(fn (Vehicle $record) => $record->hasDepot()
+                        ? "{$record->default_depot_lat}, {$record->default_depot_lng}"
+                        : 'No default depot set')
+                    ->getStateUsing(fn (Vehicle $record) => $record->hasDepot())
+                    ->boolean()
+                    ->toggleable(),
                 TextColumn::make('created_at')
                     ->dateTime()
                     ->sortable()
