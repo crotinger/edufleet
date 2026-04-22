@@ -54,6 +54,85 @@
         .ro-solve-btn:disabled { opacity: 0.6; cursor: not-allowed; }
     </style>
 
+    @if ($result)
+        @php
+            $totalMi = array_sum(array_column($result['routes'], 'distance_miles'));
+            $totalMin = array_sum(array_column($result['routes'], 'duration_minutes'));
+            $totalStudents = array_sum(array_column($result['routes'], 'students'));
+        @endphp
+        <x-filament::section>
+            <x-slot name="heading">Result</x-slot>
+            <x-slot name="description">
+                Solved in {{ $result['solve_time_ms'] }} ms ·
+                {{ count($result['routes']) }} route{{ count($result['routes']) === 1 ? '' : 's' }} ·
+                {{ $totalStudents }} students ·
+                {{ number_format($totalMi, 2) }} mi ·
+                {{ $totalMin }} min total
+            </x-slot>
+
+            <div style="overflow-x: auto;">
+                <table style="width:100%; border-collapse: collapse; font-size: 0.875rem;">
+                    <thead>
+                        <tr style="text-align: left;">
+                            <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Unit</th>
+                            <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Seats</th>
+                            <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Students</th>
+                            <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Distance</th>
+                            <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Duration</th>
+                            <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Order</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach ($result['routes'] as $r)
+                            <tr>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15); font-weight: 600;">{{ $r['unit'] }}</td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15);">{{ $r['capacity'] }}</td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15);">
+                                    <strong>{{ $r['students'] }}</strong>
+                                    @if ($r['capacity'] > 0)
+                                        <span class="ro-muted">/ {{ $r['capacity'] }}</span>
+                                    @endif
+                                </td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15);">{{ number_format($r['distance_miles'], 2) }} mi</td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15);">{{ $r['duration_minutes'] }} min</td>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15); font-size: 0.75rem;" class="ro-muted">
+                                    @php
+                                        $names = collect($r['stops'])
+                                            ->where('type', 'job')
+                                            ->pluck('student_name')
+                                            ->filter()
+                                            ->values()
+                                            ->all();
+                                    @endphp
+                                    {{ $names ? implode(' → ', array_slice($names, 0, 3)) . (count($names) > 3 ? ' … (' . (count($names) - 3) . ' more)' : '') : '—' }}
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+
+            @if (! empty($result['unassigned']))
+                <div style="margin-top: 0.75rem; padding: 0.5rem; border-left: 3px solid rgb(220 38 38); background: rgb(254 226 226 / 0.3); font-size: 0.75rem;">
+                    <strong class="ro-err">{{ count($result['unassigned']) }} unassigned student{{ count($result['unassigned']) === 1 ? '' : 's' }}</strong>
+                    — capacity exceeded or coord outside the routing graph.
+                    <ul style="margin-top: 0.25rem; padding-left: 1.25rem; list-style: disc;">
+                        @foreach (array_slice($result['unassigned'], 0, 10) as $u)
+                            <li>{{ $u['student_name'] }} @if ($u['reason']) <span class="ro-muted">— {{ $u['reason'] }}</span> @endif</li>
+                        @endforeach
+                        @if (count($result['unassigned']) > 10)
+                            <li>… and {{ count($result['unassigned']) - 10 }} more</li>
+                        @endif
+                    </ul>
+                </div>
+            @endif
+
+            <div style="margin-top: 0.5rem;" class="ro-muted">
+                Visual map + save-as-version actions come next. For now this is a dry run — nothing is saved.
+            </div>
+        </x-filament::section>
+    @endif
+
     <div
         x-data="routeOptimizer({
             vehicleMarkers: @js($vehicleMarkers),

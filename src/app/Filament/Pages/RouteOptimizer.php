@@ -4,6 +4,7 @@ namespace App\Filament\Pages;
 
 use App\Models\Student;
 use App\Models\Vehicle;
+use App\Services\VroomClient;
 use BackedEnum;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
@@ -31,6 +32,26 @@ class RouteOptimizer extends Page
     public ?float $schoolLng = null;
 
     public ?string $attendanceCenter = null;
+
+    /**
+     * VROOM result, normalized for the view.
+     *
+     * Shape:
+     *   null (no solve yet) OR
+     *   [
+     *     'routes' => [['vehicle_id', 'unit', 'capacity', 'students',
+     *                   'distance_miles', 'duration_minutes', 'geometry',
+     *                   'stops' => [['type', 'job_id', 'student_name', 'arrival', 'lat', 'lng'], ...]
+     *                  ], ...],
+     *     'unassigned' => [['student_name', 'reason'], ...],
+     *     'summary' => VROOM raw summary,
+     *     'solve_time_ms' => int,
+     *     'solved_at' => ISO timestamp,
+     *   ]
+     *
+     * @var array<string, mixed>|null
+     */
+    public ?array $result = null;
 
     public static function canAccess(): bool
     {
@@ -131,11 +152,155 @@ class RouteOptimizer extends Page
             return;
         }
 
-        // Actual VROOM call comes in the next commit.
+        $vroom = app(VroomClient::class);
+        if (! $vroom->isConfigured()) {
+            Notification::make()
+                ->title('VROOM is not configured')
+                ->body('Set VROOM_URL in .env and start the vrp compose profile.')
+                ->danger()
+                ->send();
+            return;
+        }
+
+        // Load fresh copies of the selected vehicles with depots.
+        $vehicles = Vehicle::query()
+            ->whereIn('id', $this->selectedVehicleIds)
+            ->whereNotNull('default_depot_lat')
+            ->whereNotNull('default_depot_lng')
+            ->get();
+
+        if ($vehicles->isEmpty()) {
+            Notification::make()
+                ->title('No depot-ready vehicles selected')
+                ->danger()
+                ->send();
+            return;
+        }
+
+        $vroomVehicles = [];
+        foreach ($vehicles as $v) {
+            $vroomVehicles[] = [
+                'id' => (int) $v->id,
+                'profile' => 'car',
+                'start' => [(float) $v->default_depot_lng, (float) $v->default_depot_lat],
+                'end' => [(float) $this->schoolLng, (float) $this->schoolLat],
+                'capacity' => [max(1, (int) ($v->capacity_passengers ?? 10))],
+                'description' => (string) $v->unit_number,
+            ];
+        }
+
+        $students = $this->studentPool;
+        $jobs = [];
+        foreach ($students as $s) {
+            $jobs[] = [
+                'id' => (int) $s->id,
+                'location' => [(float) $s->home_lng, (float) $s->home_lat],
+                'delivery' => [1], // each student occupies one seat
+                'description' => trim("{$s->last_name}, {$s->first_name}"),
+            ];
+        }
+
+        $start = microtime(true);
+        try {
+            $body = $vroom->solve($jobs, $vroomVehicles, ['g' => true]);
+        } catch (\Throwable $e) {
+            Notification::make()
+                ->title('VROOM failed')
+                ->body($e->getMessage())
+                ->danger()
+                ->send();
+            return;
+        }
+        $ms = (int) round((microtime(true) - $start) * 1000);
+
+        $this->result = $this->formatResult($body, $vehicles, $students, $ms);
+
+        $assigned = array_sum(array_map(
+            fn (array $r) => (int) $r['students'],
+            $this->result['routes'],
+        ));
+        $unassigned = count($this->result['unassigned']);
+
         Notification::make()
-            ->title('Solver wiring lands in commit 3')
-            ->body('Inputs validated: ' . count($this->selectedVehicleIds) . ' vehicles, ' . $this->studentPool->count() . ' students.')
-            ->info()
+            ->title("Solved in {$ms} ms")
+            ->body("{$assigned} students assigned across " . count($this->result['routes']) . ' route'
+                . (count($this->result['routes']) === 1 ? '' : 's')
+                . ($unassigned > 0 ? ", {$unassigned} unassigned." : '.'))
+            ->success()
             ->send();
+    }
+
+    /**
+     * Normalize VROOM's raw response into the shape the view + future
+     * save-as-RoutePath action expect.
+     *
+     * @param array<string, mixed>                       $body
+     * @param \Illuminate\Support\Collection<int, Vehicle> $vehicles
+     * @param \Illuminate\Support\Collection<int, Student> $students
+     * @return array<string, mixed>
+     */
+    private function formatResult(array $body, \Illuminate\Support\Collection $vehicles, \Illuminate\Support\Collection $students, int $wallClockMs): array
+    {
+        $vehicleMap = $vehicles->keyBy('id');
+        $studentMap = $students->keyBy('id');
+
+        $routes = [];
+        foreach ($body['routes'] ?? [] as $r) {
+            $vehicleId = (int) ($r['vehicle'] ?? 0);
+            $vehicle = $vehicleMap[$vehicleId] ?? null;
+
+            $stops = [];
+            $studentCount = 0;
+            foreach ($r['steps'] ?? [] as $step) {
+                $type = $step['type'] ?? 'unknown';
+                $jobId = isset($step['job']) ? (int) $step['job'] : null;
+                $student = $jobId !== null ? ($studentMap[$jobId] ?? null) : null;
+                if ($type === 'job') {
+                    $studentCount++;
+                }
+
+                $loc = $step['location'] ?? null;
+                $stops[] = [
+                    'type' => $type,
+                    'job_id' => $jobId,
+                    'student_name' => $student ? trim("{$student->last_name}, {$student->first_name}") : null,
+                    'arrival' => $step['arrival'] ?? null,
+                    'lng' => is_array($loc) ? (float) ($loc[0] ?? 0) : null,
+                    'lat' => is_array($loc) ? (float) ($loc[1] ?? 0) : null,
+                ];
+            }
+
+            $routes[] = [
+                'vehicle_id' => $vehicleId,
+                'unit' => $vehicle?->unit_number ?? (string) $vehicleId,
+                'capacity' => (int) ($vehicle?->capacity_passengers ?? 0),
+                'students' => $studentCount,
+                'distance_meters' => (int) ($r['distance'] ?? 0),
+                'duration_seconds' => (int) ($r['duration'] ?? 0),
+                'distance_miles' => round(((int) ($r['distance'] ?? 0)) / 1609.344, 2),
+                'duration_minutes' => (int) round(((int) ($r['duration'] ?? 0)) / 60),
+                'geometry' => $r['geometry'] ?? null,
+                'stops' => $stops,
+            ];
+        }
+
+        $unassigned = [];
+        foreach ($body['unassigned'] ?? [] as $u) {
+            $jobId = isset($u['id']) ? (int) $u['id'] : null;
+            $student = $jobId !== null ? ($studentMap[$jobId] ?? null) : null;
+            $unassigned[] = [
+                'job_id' => $jobId,
+                'student_name' => $student ? trim("{$student->last_name}, {$student->first_name}") : (string) $jobId,
+                'reason' => $u['reason'] ?? null,
+            ];
+        }
+
+        return [
+            'routes' => $routes,
+            'unassigned' => $unassigned,
+            'summary' => $body['summary'] ?? [],
+            'solve_time_ms' => $wallClockMs,
+            'solved_at' => now()->toIso8601String(),
+        ];
     }
 }
