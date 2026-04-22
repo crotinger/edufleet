@@ -116,7 +116,11 @@
                 </div>
 
                 @php
-                    $grouped = collect($inspectionItems)->groupBy('category');
+                    // IMPORTANT: preserveKeys: true keeps the template_item_id
+                    // as the array key inside each group. Without it, groupBy()
+                    // re-indexes from 0 and multiple items would collide on the
+                    // same synthetic "$itemId" across categories.
+                    $grouped = collect($inspectionItems)->groupBy('category', preserveKeys: true);
                 @endphp
                 @foreach ($grouped as $category => $rows)
                     <div wire:key="cat-{{ md5($category) }}" style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid #e2e8f0;">
