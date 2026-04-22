@@ -66,11 +66,51 @@ services:
       - redis_data:/data
     networks: [edufleet]
 
+  # ============================================================
+  # Optional — route optimization stack. Opt-in via:
+  #   docker compose --profile vrp up -d
+  # First `osrm` start downloads the regional OSM extract (~250 MB
+  # for a US state) and preprocesses it (one-time, ~5–10 min,
+  # ~2 GB RAM peak). Subsequent starts reuse cached .osrm files.
+  # ============================================================
+
+  osrm:
+    image: osrm/osrm-backend:latest
+    container_name: edufleet-osrm
+    restart: unless-stopped
+    profiles: ["vrp"]
+    entrypoint: ["/bin/bash", "/bootstrap.sh"]
+    environment:
+      OSRM_REGION: ${OSRM_REGION:-kansas}
+      OSRM_PBF_URL: ${OSRM_PBF_URL:-}
+    volumes:
+      - osrm_data:/data
+      - ./docker/osrm/bootstrap.sh:/bootstrap.sh:ro
+    ports:
+      - "127.0.0.1:${OSRM_PORT:-5000}:5000"
+    networks: [edufleet]
+
+  vroom:
+    image: vroomvrp/vroom-docker:latest
+    container_name: edufleet-vroom
+    restart: unless-stopped
+    profiles: ["vrp"]
+    depends_on:
+      - osrm
+    volumes:
+      - ./docker/vroom/config.yml:/conf/config.yml:ro
+      - vroom_logs:/logs
+    ports:
+      - "127.0.0.1:${VROOM_PORT:-3000}:3000"
+    networks: [edufleet]
+
 volumes:
   db_data:
   redis_data:
   caddy_data:
   caddy_config:
+  osrm_data:
+  vroom_logs:
 
 networks:
   edufleet:
