@@ -2,7 +2,9 @@
 
 namespace App\Filament\Resources\Vehicles\Schemas;
 
+use App\Models\Vehicle;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Textarea;
 use Filament\Schemas\Components\Grid;
@@ -16,8 +18,11 @@ class VehicleForm
     {
         return $schema
             ->components([
-                TextInput::make('type')
-                    ->required(),
+                Select::make('type')
+                    ->options(Vehicle::types())
+                    ->default(Vehicle::TYPE_BUS)
+                    ->required()
+                    ->native(false),
                 TextInput::make('unit_number')
                     ->required(),
                 TextInput::make('vin'),
@@ -26,16 +31,21 @@ class VehicleForm
                 TextInput::make('model'),
                 TextInput::make('year')
                     ->numeric(),
-                TextInput::make('fuel_type'),
+                Select::make('fuel_type')
+                    ->options(Vehicle::fuelTypes())
+                    ->native(false)
+                    ->placeholder('Select fuel type'),
                 TextInput::make('odometer_miles')
                     ->required()
                     ->numeric()
                     ->default(0),
                 TextInput::make('capacity_passengers')
                     ->numeric(),
-                TextInput::make('status')
+                Select::make('status')
+                    ->options(Vehicle::statuses())
+                    ->default(Vehicle::STATUS_ACTIVE)
                     ->required()
-                    ->default('active'),
+                    ->native(false),
                 DatePicker::make('acquired_on'),
                 DatePicker::make('retired_on'),
                 Textarea::make('notes')

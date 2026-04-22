@@ -51,7 +51,7 @@ class InspectionTemplate extends Model
         return static::query()
             ->where('active', true)
             ->where(function ($q) use ($vehicle) {
-                $q->where('vehicle_type', $vehicle->type)
+                $q->whereRaw('lower(vehicle_type) = lower(?)', [$vehicle->type])
                   ->orWhereNull('vehicle_type');
             })
             ->orderByRaw('CASE WHEN vehicle_type IS NULL THEN 1 ELSE 0 END')

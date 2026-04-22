@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -49,6 +50,31 @@ class Vehicle extends Model
     public function hasDepot(): bool
     {
         return $this->default_depot_lat !== null && $this->default_depot_lng !== null;
+    }
+
+    /** Normalize enum fields to lowercase on save so lookups match the
+     *  canonical values in Vehicle::types() / statuses() / fuelTypes()
+     *  regardless of how a user typed it or how a CSV import stored it. */
+    protected function type(): Attribute
+    {
+        return Attribute::set(fn ($value) => self::normalizeEnum($value));
+    }
+
+    protected function status(): Attribute
+    {
+        return Attribute::set(fn ($value) => self::normalizeEnum($value));
+    }
+
+    protected function fuelType(): Attribute
+    {
+        return Attribute::set(fn ($value) => self::normalizeEnum($value));
+    }
+
+    private static function normalizeEnum(mixed $value): ?string
+    {
+        if ($value === null) return null;
+        $v = strtolower(trim((string) $value));
+        return $v === '' ? null : $v;
     }
 
     public static function types(): array
