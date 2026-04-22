@@ -58,7 +58,7 @@ class TripResource extends Resource
     public static function getRelations(): array
     {
         return [
-            //
+            \App\Filament\Resources\Trips\RelationManagers\BoardingsRelationManager::class,
         ];
     }
 

@@ -26,4 +26,17 @@ class TripStudentBoarding extends Model
     {
         return $this->belongsTo(Student::class);
     }
+
+    protected static function booted(): void
+    {
+        // Keep the parent Trip's denormalized rider counts in sync whenever
+        // any boarding changes. Same-transaction so Filament inline toggles /
+        // bulk actions / CreateAction all reflect immediately.
+        $sync = function (TripStudentBoarding $boarding) {
+            $boarding->loadMissing('trip');
+            $boarding->trip?->syncRidersFromBoardings();
+        };
+        static::saved($sync);
+        static::deleted($sync);
+    }
 }

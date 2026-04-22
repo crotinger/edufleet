@@ -164,6 +164,23 @@ class Trip extends Model
             : (int) ($this->riders_ineligible ?? 0);
     }
 
+    /**
+     * Denormalize boarding-derived rider counts onto this trip's
+     * riders_eligible / riders_ineligible columns so the KSDE report
+     * (which aggregates from those columns) picks them up automatically.
+     * No-op when there are no boardings — keeps any manual entry intact.
+     */
+    public function syncRidersFromBoardings(): void
+    {
+        if (! $this->hasBoardings()) {
+            return;
+        }
+        $this->updateQuietly([
+            'riders_eligible' => $this->computedRidersEligible(),
+            'riders_ineligible' => $this->computedRidersIneligible(),
+        ]);
+    }
+
     public static function statuses(): array
     {
         return [
