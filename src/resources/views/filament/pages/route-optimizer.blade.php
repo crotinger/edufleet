@@ -70,10 +70,14 @@
                 {{ $totalMin }} min total
             </x-slot>
 
+            @php
+                $palette = ['#ef4444','#3b82f6','#10b981','#f59e0b','#a855f7','#ec4899','#06b6d4','#f97316','#65a30d','#6366f1'];
+            @endphp
             <div style="overflow-x: auto;">
                 <table style="width:100%; border-collapse: collapse; font-size: 0.875rem;">
                     <thead>
                         <tr style="text-align: left;">
+                            <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);"></th>
                             <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Unit</th>
                             <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Seats</th>
                             <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Students</th>
@@ -83,8 +87,12 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach ($result['routes'] as $r)
+                        @foreach ($result['routes'] as $idx => $r)
+                            @php $color = $palette[$idx % count($palette)]; @endphp
                             <tr>
+                                <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15); width: 1.25rem;">
+                                    <span style="display:inline-block; width:14px; height:14px; border-radius:3px; background:{{ $color }};"></span>
+                                </td>
                                 <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15); font-weight: 600;">{{ $r['unit'] }}</td>
                                 <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15);">{{ $r['capacity'] }}</td>
                                 <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15);">
@@ -139,6 +147,7 @@
             studentMarkers: @js($studentMarkers),
             initialSchoolLat: @js($schoolLat),
             initialSchoolLng: @js($schoolLng),
+            initialResult: @js($result),
         })"
         x-init="init()"
         class="ro-grid"
@@ -233,10 +242,18 @@
                 studentMarkers: config.studentMarkers || [],
                 schoolLat: config.initialSchoolLat,
                 schoolLng: config.initialSchoolLng,
+                initialResult: config.initialResult || null,
                 map: null,
                 _vehicleLayer: null,
                 _studentLayer: null,
                 _schoolMarker: null,
+                _routeLayer: null,
+
+                _palette: [
+                    '#ef4444', '#3b82f6', '#10b981', '#f59e0b',
+                    '#a855f7', '#ec4899', '#06b6d4', '#f97316',
+                    '#65a30d', '#6366f1',
+                ],
 
                 init() {
                     if (typeof L === 'undefined') {
@@ -274,6 +291,101 @@
 
                     this.$watch('schoolLat', () => this.drawSchool());
                     this.$watch('schoolLng', () => this.drawSchool());
+
+                    // Draw any pre-existing result (e.g. after Livewire
+                    // re-renders the page from a filter change post-solve).
+                    if (this.initialResult) this.drawResult(this.initialResult);
+
+                    // New solves arrive via a Livewire-dispatched event.
+                    this.$wire.on('route-optimizer-result', (payload) => {
+                        const result = payload?.result ?? payload?.[0]?.result ?? null;
+                        this.drawResult(result);
+                    });
+                },
+
+                decodePolyline(str, precision) {
+                    precision = precision || 5;
+                    let index = 0, lat = 0, lng = 0, byte;
+                    const factor = Math.pow(10, precision);
+                    const coords = [];
+                    while (index < str.length) {
+                        let shift = 0, result = 0;
+                        do {
+                            byte = str.charCodeAt(index++) - 63;
+                            result |= (byte & 0x1f) << shift;
+                            shift += 5;
+                        } while (byte >= 0x20);
+                        lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+
+                        shift = 0; result = 0;
+                        do {
+                            byte = str.charCodeAt(index++) - 63;
+                            result |= (byte & 0x1f) << shift;
+                            shift += 5;
+                        } while (byte >= 0x20);
+                        lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+
+                        coords.push([lat / factor, lng / factor]);
+                    }
+                    return coords;
+                },
+
+                drawResult(result) {
+                    if (this._routeLayer) {
+                        this.map.removeLayer(this._routeLayer);
+                        this._routeLayer = null;
+                    }
+                    if (!result || !Array.isArray(result.routes) || result.routes.length === 0) return;
+
+                    this._routeLayer = L.layerGroup().addTo(this.map);
+                    const bounds = [];
+
+                    result.routes.forEach((route, idx) => {
+                        const color = this._palette[idx % this._palette.length];
+
+                        if (typeof route.geometry === 'string' && route.geometry.length > 0) {
+                            try {
+                                const coords = this.decodePolyline(route.geometry);
+                                if (coords.length > 0) {
+                                    L.polyline(coords, { color, weight: 4, opacity: 0.85 }).addTo(this._routeLayer);
+                                    coords.forEach(c => bounds.push(c));
+                                }
+                            } catch (e) {
+                                console.warn('failed to decode polyline for route', idx, e);
+                            }
+                        }
+
+                        let n = 1;
+                        (route.stops || []).forEach(stop => {
+                            if (stop.type !== 'job') return;
+                            const lat = parseFloat(stop.lat);
+                            const lng = parseFloat(stop.lng);
+                            if (!isFinite(lat) || !isFinite(lng)) return;
+
+                            const icon = L.divIcon({
+                                className: '',
+                                html: `<div style="background:${color};color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font:700 11px sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.4);border:2px solid white">${n}</div>`,
+                                iconSize: [22, 22],
+                                iconAnchor: [11, 11],
+                            });
+                            L.marker([lat, lng], { icon })
+                                .bindTooltip(`#${n} Unit ${route.unit} — ${stop.student_name || ''}`, { direction: 'top' })
+                                .addTo(this._routeLayer);
+                            bounds.push([lat, lng]);
+                            n++;
+                        });
+                    });
+
+                    // Dim the raw student pool dots so route markers pop.
+                    if (this._studentLayer) {
+                        this._studentLayer.eachLayer(m => {
+                            m.setStyle && m.setStyle({ fillOpacity: 0.2, opacity: 0.3 });
+                        });
+                    }
+
+                    if (bounds.length > 0) {
+                        this.map.fitBounds(L.latLngBounds(bounds), { padding: [30, 30], maxZoom: 14 });
+                    }
                 },
 
                 drawVehicles() {

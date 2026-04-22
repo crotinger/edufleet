@@ -215,6 +215,10 @@ class RouteOptimizer extends Page
 
         $this->result = $this->formatResult($body, $vehicles, $students, $ms);
 
+        // Push the result to Alpine so the map can draw it without relying on
+        // Livewire $watch semantics (which don't always fire on nested arrays).
+        $this->dispatch('route-optimizer-result', result: $this->result);
+
         $assigned = array_sum(array_map(
             fn (array $r) => (int) $r['students'],
             $this->result['routes'],
