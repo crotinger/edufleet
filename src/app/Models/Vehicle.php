@@ -161,4 +161,14 @@ class Vehicle extends Model
     {
         return $this->hasOne(PreTripInspection::class)->latestOfMany('started_at');
     }
+
+    public function postTripInspections(): HasMany
+    {
+        return $this->hasMany(PostTripInspection::class);
+    }
+
+    public function latestPostTripInspection(): HasOne
+    {
+        return $this->hasOne(PostTripInspection::class)->latestOfMany('completed_at');
+    }
 }

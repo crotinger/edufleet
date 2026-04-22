@@ -13,7 +13,7 @@ class RolesAndPermissionsSeeder extends Seeder
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
-        $resources = ['vehicle', 'driver', 'student', 'trip', 'trip_request', 'trip_reservation', 'maintenance', 'inspection', 'inspection_template', 'pre_trip_inspection', 'registration', 'route', 'fuel_log', 'ridership', 'user', 'role'];
+        $resources = ['vehicle', 'driver', 'student', 'trip', 'trip_request', 'trip_reservation', 'maintenance', 'inspection', 'inspection_template', 'pre_trip_inspection', 'post_trip_inspection', 'registration', 'route', 'fuel_log', 'ridership', 'user', 'role'];
         $abilities = ['view_any', 'view', 'create', 'update', 'delete', 'restore', 'force_delete'];
 
         foreach ($resources as $resource) {
@@ -50,7 +50,8 @@ class RolesAndPermissionsSeeder extends Seeder
                 ->orWhere('name', 'like', '%_maintenance')
                 ->orWhere('name', 'like', '%_inspection')
                 ->orWhere('name', 'like', '%_inspection_template')
-                ->orWhere('name', 'like', '%_pre_trip_inspection'))
+                ->orWhere('name', 'like', '%_pre_trip_inspection')
+                ->orWhere('name', 'like', '%_post_trip_inspection'))
                 ->orWhereIn('name', ['view_any_trip', 'view_trip', 'view_vehicle_availability'])
                 ->get()
         );
@@ -63,8 +64,9 @@ class RolesAndPermissionsSeeder extends Seeder
                 'view_any_ridership', 'view_ridership', 'create_ridership',
                 'view_any_trip', 'view_trip', 'create_trip',
                 'create_fuel_log',
-                // Drivers submit their own pre-trip; they don't edit templates.
+                // Drivers submit their own pre-/post-trip; they don't edit templates.
                 'view_any_pre_trip_inspection', 'view_pre_trip_inspection', 'create_pre_trip_inspection',
+                'view_any_post_trip_inspection', 'view_post_trip_inspection', 'create_post_trip_inspection',
             ])->get()
         );
 

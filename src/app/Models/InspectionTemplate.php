@@ -13,6 +13,9 @@ class InspectionTemplate extends Model
     use LogsActivity;
     use SoftDeletes;
 
+    public const TYPE_PRE_TRIP = 'pre_trip';
+    public const TYPE_POST_TRIP = 'post_trip';
+
     protected $guarded = ['id'];
 
     protected function casts(): array
@@ -46,10 +49,11 @@ class InspectionTemplate extends Model
      * Best active template for a vehicle. Prefers a template scoped to the
      * vehicle's type, falls back to an unscoped one, else null.
      */
-    public static function forVehicle(Vehicle $vehicle): ?self
+    public static function forVehicle(Vehicle $vehicle, string $type = self::TYPE_PRE_TRIP): ?self
     {
         return static::query()
             ->where('active', true)
+            ->where('inspection_type', $type)
             ->where(function ($q) use ($vehicle) {
                 $q->whereRaw('lower(vehicle_type) = lower(?)', [$vehicle->type])
                   ->orWhereNull('vehicle_type');
@@ -57,5 +61,13 @@ class InspectionTemplate extends Model
             ->orderByRaw('CASE WHEN vehicle_type IS NULL THEN 1 ELSE 0 END')
             ->orderBy('id')
             ->first();
+    }
+
+    public static function inspectionTypes(): array
+    {
+        return [
+            self::TYPE_PRE_TRIP => 'Pre-trip',
+            self::TYPE_POST_TRIP => 'Post-trip',
+        ];
     }
 }

@@ -82,6 +82,11 @@ class Trip extends Model
         return $this->hasOne(PreTripInspection::class);
     }
 
+    public function postTripInspection(): HasOne
+    {
+        return $this->hasOne(PostTripInspection::class);
+    }
+
     public static function statuses(): array
     {
         return [
