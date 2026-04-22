@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\Activitylog\Models\Concerns\LogsActivity;
 use Spatie\Activitylog\Support\LogOptions;
@@ -87,6 +88,11 @@ class Student extends Model
         return $this->belongsToMany(Route::class)
             ->withPivot(['direction', 'notes'])
             ->withTimestamps();
+    }
+
+    public function tripBoardings(): HasMany
+    {
+        return $this->hasMany(TripStudentBoarding::class);
     }
 
     public static function directions(): array

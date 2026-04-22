@@ -5,6 +5,8 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\Activitylog\Support\LogOptions;
@@ -85,6 +87,81 @@ class Trip extends Model
     public function postTripInspection(): HasOne
     {
         return $this->hasOne(PostTripInspection::class);
+    }
+
+    public function studentBoardings(): HasMany
+    {
+        return $this->hasMany(TripStudentBoarding::class);
+    }
+
+    /**
+     * All students associated with this trip via boardings, whether they
+     * boarded or not. Use wherePivot('boarded', true) on the returned
+     * relation to narrow to students who actually rode.
+     */
+    public function studentsOnRoster(): BelongsToMany
+    {
+        return $this->belongsToMany(Student::class, 'trip_student_boardings')
+            ->withPivot(['boarded', 'boarded_at', 'stop_name', 'notes'])
+            ->withTimestamps();
+    }
+
+    /**
+     * True when this trip can track per-student boardings — daily route
+     * trips on a bus. Other trip types (athletic, field, activity,
+     * maintenance) don't have a student roster, just a passenger count.
+     */
+    public function supportsBoardings(): bool
+    {
+        return $this->trip_type === self::TYPE_DAILY_ROUTE
+            && $this->vehicle
+            && $this->vehicle->type === Vehicle::TYPE_BUS;
+    }
+
+    public function hasBoardings(): bool
+    {
+        return $this->studentBoardings()->exists();
+    }
+
+    /**
+     * Count of boarded students whose home is ≥ 2.5 miles from school
+     * (or on a hazardous route). Derived from the actual roster attendance
+     * when boardings exist; use effectiveRidersEligible() from callers
+     * that should fall back to the manually-entered count.
+     */
+    public function computedRidersEligible(): int
+    {
+        return $this->studentBoardings()
+            ->where('boarded', true)
+            ->with(['student' => fn ($q) => $q->withTrashed()])
+            ->get()
+            ->filter(fn (TripStudentBoarding $b) => $b->student?->is_eligible_rider)
+            ->count();
+    }
+
+    public function computedRidersIneligible(): int
+    {
+        return $this->studentBoardings()
+            ->where('boarded', true)
+            ->with(['student' => fn ($q) => $q->withTrashed()])
+            ->get()
+            ->filter(fn (TripStudentBoarding $b) => $b->student && ! $b->student->is_eligible_rider)
+            ->count();
+    }
+
+    /** Use this in reporting — boardings win when present, else the manual count. */
+    public function effectiveRidersEligible(): int
+    {
+        return $this->hasBoardings()
+            ? $this->computedRidersEligible()
+            : (int) ($this->riders_eligible ?? 0);
+    }
+
+    public function effectiveRidersIneligible(): int
+    {
+        return $this->hasBoardings()
+            ? $this->computedRidersIneligible()
+            : (int) ($this->riders_ineligible ?? 0);
     }
 
     public static function statuses(): array
