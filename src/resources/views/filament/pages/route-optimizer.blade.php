@@ -281,6 +281,8 @@
                 _studentLayer: null,
                 _schoolMarker: null,
                 _routeLayer: null,
+                _unitMarkers: [],       // {marker, unit}
+                _stopMarkers: [],       // {marker, color, number}
 
                 _palette: [
                     '#ef4444', '#3b82f6', '#10b981', '#f59e0b',
@@ -321,6 +323,10 @@
 
                     setTimeout(() => this.map?.invalidateSize(), 80);
                     setTimeout(() => this.map?.invalidateSize(), 400);
+
+                    // Rescale divIcon markers when the user zooms — by default
+                    // they stay at a fixed pixel size regardless of zoom.
+                    this.map.on('zoomend', () => this.restyleMarkers());
 
                     this.$watch('schoolLat', () => this.drawSchool());
                     this.$watch('schoolLng', () => this.drawSchool());
@@ -368,6 +374,7 @@
                         this.map.removeLayer(this._routeLayer);
                         this._routeLayer = null;
                     }
+                    this._stopMarkers = [];
                     if (!result || !Array.isArray(result.routes) || result.routes.length === 0) return;
 
                     this._routeLayer = L.layerGroup().addTo(this.map);
@@ -395,15 +402,10 @@
                             const lng = parseFloat(stop.lng);
                             if (!isFinite(lat) || !isFinite(lng)) return;
 
-                            const icon = L.divIcon({
-                                className: '',
-                                html: `<div style="background:${color};color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font:700 11px sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.4);border:2px solid white">${n}</div>`,
-                                iconSize: [22, 22],
-                                iconAnchor: [11, 11],
-                            });
-                            L.marker([lat, lng], { icon })
+                            const marker = L.marker([lat, lng], { icon: this._stopIcon(color, n) })
                                 .bindTooltip(`#${n} Unit ${route.unit} — ${stop.student_name || ''}`, { direction: 'top' })
                                 .addTo(this._routeLayer);
+                            this._stopMarkers.push({ marker, color, number: n });
                             bounds.push([lat, lng]);
                             n++;
                         });
@@ -421,19 +423,67 @@
                     }
                 },
 
+                _scale() {
+                    if (!this.map) return 1;
+                    // Base zoom 12 → scale 1.0. Grow 15 % per extra zoom level,
+                    // clamped so we don't make markers tiny or absurd.
+                    const z = this.map.getZoom();
+                    return Math.max(0.7, Math.min(2.5, 1 + (z - 12) * 0.15));
+                },
+
+                _unitIcon(unit) {
+                    const s = this._scale();
+                    const padV = Math.round(3 * s);
+                    const padH = Math.round(6 * s);
+                    const font = Math.max(10, Math.round(11 * s));
+                    const radius = Math.round(6 * s);
+                    return L.divIcon({
+                        className: '',
+                        html: `<div style="background:#2563eb;color:#fff;border-radius:${radius}px;padding:${padV}px ${padH}px;font:600 ${font}px sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.3);white-space:nowrap">${unit}</div>`,
+                        iconSize: null,
+                        iconAnchor: [Math.round(18 * s), Math.round(10 * s)],
+                    });
+                },
+
+                _schoolIcon() {
+                    const s = this._scale();
+                    const size = Math.round(24 * s);
+                    const font = Math.max(11, Math.round(13 * s));
+                    return L.divIcon({
+                        className: '',
+                        html: `<div style="background:#16a34a;color:#fff;border-radius:50%;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;font:700 ${font}px sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.4)">S</div>`,
+                        iconSize: [size, size],
+                        iconAnchor: [size / 2, size / 2],
+                    });
+                },
+
+                _stopIcon(color, number) {
+                    const s = this._scale();
+                    const size = Math.round(22 * s);
+                    const font = Math.max(9, Math.round(11 * s));
+                    return L.divIcon({
+                        className: '',
+                        html: `<div style="background:${color};color:#fff;border-radius:50%;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;font:700 ${font}px sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.4);border:2px solid white">${number}</div>`,
+                        iconSize: [size, size],
+                        iconAnchor: [size / 2, size / 2],
+                    });
+                },
+
+                restyleMarkers() {
+                    this._unitMarkers.forEach(({ marker, unit }) => marker.setIcon(this._unitIcon(unit)));
+                    this._stopMarkers.forEach(({ marker, color, number }) => marker.setIcon(this._stopIcon(color, number)));
+                    if (this._schoolMarker) this._schoolMarker.setIcon(this._schoolIcon());
+                },
+
                 drawVehicles() {
                     if (this._vehicleLayer) this.map.removeLayer(this._vehicleLayer);
                     this._vehicleLayer = L.layerGroup().addTo(this.map);
+                    this._unitMarkers = [];
                     this.vehicleMarkers.forEach(v => {
-                        const icon = L.divIcon({
-                            className: '',
-                            html: `<div style="background:#2563eb;color:#fff;border-radius:6px;padding:3px 6px;font:600 11px sans-serif;box-shadow:0 1px 2px rgba(0,0,0,.3);white-space:nowrap">${v.unit}</div>`,
-                            iconSize: null,
-                            iconAnchor: [18, 10],
-                        });
-                        L.marker([v.lat, v.lng], { icon })
+                        const marker = L.marker([v.lat, v.lng], { icon: this._unitIcon(v.unit) })
                             .bindTooltip(`Unit ${v.unit} · ${v.capacity} seats`, { direction: 'top' })
                             .addTo(this._vehicleLayer);
+                        this._unitMarkers.push({ marker, unit: v.unit });
                     });
                 },
 
@@ -461,13 +511,7 @@
                     const lat = parseFloat(this.schoolLat);
                     const lng = parseFloat(this.schoolLng);
                     if (!isFinite(lat) || !isFinite(lng)) return;
-                    const icon = L.divIcon({
-                        className: '',
-                        html: `<div style="background:#16a34a;color:#fff;border-radius:50%;width:24px;height:24px;display:flex;align-items:center;justify-content:center;font:700 13px sans-serif;box-shadow:0 1px 3px rgba(0,0,0,.4)">S</div>`,
-                        iconSize: [24, 24],
-                        iconAnchor: [12, 12],
-                    });
-                    this._schoolMarker = L.marker([lat, lng], { icon })
+                    this._schoolMarker = L.marker([lat, lng], { icon: this._schoolIcon() })
                         .bindTooltip('School drop-off', { direction: 'top' })
                         .addTo(this.map);
                 },
