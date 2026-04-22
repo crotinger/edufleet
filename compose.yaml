@@ -91,7 +91,10 @@ services:
     networks: [edufleet]
 
   vroom:
-    image: vroomvrp/vroom-docker:latest
+    # vroomvrp/vroom-docker has no `latest` tag — pin to a specific version.
+    # Latest stable as of this commit is v1.13.0; check Docker Hub before bumping:
+    #   https://hub.docker.com/r/vroomvrp/vroom-docker/tags
+    image: vroomvrp/vroom-docker:v1.13.0
     container_name: edufleet-vroom
     restart: unless-stopped
     profiles: ["vrp"]
