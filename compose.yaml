@@ -74,15 +74,54 @@ services:
   # ~2 GB RAM peak). Subsequent starts reuse cached .osrm files.
   # ============================================================
 
-  osrm:
-    image: osrm/osrm-backend:latest
-    container_name: edufleet-osrm
-    restart: unless-stopped
+  # One-shot sidecar that downloads the regional PBF extract from Geofabrik
+  # into the shared osrm_data volume before osrm runs. Uses alpine (not the
+  # osrm-backend base image) because recent osrm-backend images ship on a
+  # long-EOL Debian Stretch with dead apt mirrors.
+  osrm-data:
+    image: alpine:3.19
+    container_name: edufleet-osrm-data
+    restart: "no"
     profiles: ["vrp"]
-    entrypoint: ["/bin/bash", "/bootstrap.sh"]
     environment:
       OSRM_REGION: ${OSRM_REGION:-kansas}
       OSRM_PBF_URL: ${OSRM_PBF_URL:-}
+    volumes:
+      - osrm_data:/data
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        REGION="$${OSRM_REGION:-kansas}"
+        URL="$${OSRM_PBF_URL:-https://download.geofabrik.de/north-america/us/$${REGION}-latest.osm.pbf}"
+        PBF="/data/$${REGION}-latest.osm.pbf"
+        OSRM_FILE="/data/$${REGION}-latest.osrm"
+        if [ -f "$$OSRM_FILE" ]; then
+            echo "[osrm-data] already preprocessed at $$OSRM_FILE — skipping"
+            exit 0
+        fi
+        if [ ! -f "$$PBF" ]; then
+            apk add --no-cache wget ca-certificates >/dev/null
+            echo "[osrm-data] Downloading $$URL"
+            wget -q --show-progress -O "$$PBF" "$$URL"
+            echo "[osrm-data] Download complete: $$(du -h $$PBF | cut -f1)"
+        else
+            echo "[osrm-data] PBF already present at $$PBF"
+        fi
+    networks: [edufleet]
+
+  osrm:
+    image: osrm/osrm-backend:v5.25.0
+    container_name: edufleet-osrm
+    restart: unless-stopped
+    profiles: ["vrp"]
+    depends_on:
+      osrm-data:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/bash", "/bootstrap.sh"]
+    environment:
+      OSRM_REGION: ${OSRM_REGION:-kansas}
     volumes:
       - osrm_data:/data
       - ./docker/osrm/bootstrap.sh:/bootstrap.sh:ro
