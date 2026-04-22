@@ -5,6 +5,8 @@
     $studentMarkers = $this->getStudentMarkers();
     $centers = $this->attendanceCenters;
     $poolCount = $this->studentPool->count();
+    $availableRoutes = $this->availableRoutes;
+    $canSaveRoutes = auth()->user()?->can('update_route') ?? false;
 @endphp
 
 <x-filament-panels::page>
@@ -84,6 +86,9 @@
                             <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Distance</th>
                             <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Duration</th>
                             <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Order</th>
+                            @if ($canSaveRoutes)
+                                <th style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.3);">Save</th>
+                            @endif
                         </tr>
                     </thead>
                     <tbody>
@@ -114,6 +119,34 @@
                                     @endphp
                                     {{ $names ? implode(' → ', array_slice($names, 0, 3)) . (count($names) > 3 ? ' … (' . (count($names) - 3) . ' more)' : '') : '—' }}
                                 </td>
+                                @if ($canSaveRoutes)
+                                    <td style="padding: 0.5rem; border-bottom: 1px solid rgb(229 231 235 / 0.15);">
+                                        @if (isset($savedPathBadges[$idx]))
+                                            @php $b = $savedPathBadges[$idx]; @endphp
+                                            <span class="ro-ok" style="font-size: 0.75rem;">
+                                                ✓ saved to <strong>{{ $b['route_code'] }}</strong>
+                                                as <em>{{ $b['version_name'] }}</em>
+                                            </span>
+                                            <a href="{{ $b['planner_url'] }}" style="margin-left: 0.25rem; font-size: 0.75rem; color: rgb(37 99 235);">open planner</a>
+                                        @else
+                                            <div style="display:flex; gap: 0.25rem; align-items: center;">
+                                                <select wire:model="saveRouteTargets.{{ $idx }}"
+                                                        class="ro-input"
+                                                        style="font-size: 0.75rem; padding: 0.25rem 0.375rem; width: auto; min-width: 10rem;">
+                                                    <option value="">Pick Route…</option>
+                                                    @foreach ($availableRoutes as $route)
+                                                        <option value="{{ $route->id }}">{{ $route->code }} — {{ $route->name }}</option>
+                                                    @endforeach
+                                                </select>
+                                                <button type="button"
+                                                        wire:click="saveToRoute({{ $idx }})"
+                                                        style="font-size: 0.75rem; padding: 0.25rem 0.5rem; border-radius: 0.25rem; background: rgb(22 163 74); color: white; border: none; cursor: pointer;">
+                                                    Save
+                                                </button>
+                                            </div>
+                                        @endif
+                                    </td>
+                                @endif
                             </tr>
                         @endforeach
                     </tbody>
@@ -136,7 +169,7 @@
             @endif
 
             <div style="margin-top: 0.5rem;" class="ro-muted">
-                Visual map + save-as-version actions come next. For now this is a dry run — nothing is saved.
+                Saves land as <em>inactive</em> versions. Open the planner, review, then Activate to use for reporting.
             </div>
         </x-filament::section>
     @endif

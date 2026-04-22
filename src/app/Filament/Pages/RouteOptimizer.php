@@ -2,6 +2,9 @@
 
 namespace App\Filament\Pages;
 
+use App\Filament\Resources\Routes\RouteResource;
+use App\Models\Route;
+use App\Models\RoutePath;
 use App\Models\Student;
 use App\Models\Vehicle;
 use App\Services\VroomClient;
@@ -52,6 +55,21 @@ class RouteOptimizer extends Page
      * @var array<string, mixed>|null
      */
     public ?array $result = null;
+
+    /**
+     * Selected target Route id per result-row index.
+     *
+     * @var array<int, int|null>
+     */
+    public array $saveRouteTargets = [];
+
+    /**
+     * Saved-path badge per result-row index:
+     *   [resultRouteIndex => ['path_id' => int, 'route_id' => int, 'route_code' => string, 'version_name' => string]]
+     *
+     * @var array<int, array<string, mixed>>
+     */
+    public array $savedPathBadges = [];
 
     public static function canAccess(): bool
     {
@@ -124,6 +142,15 @@ class RouteOptimizer extends Page
             ])
             ->values()
             ->all();
+    }
+
+    /** @return \Illuminate\Support\Collection<int, Route> */
+    public function getAvailableRoutesProperty(): \Illuminate\Support\Collection
+    {
+        return Route::query()
+            ->where('status', Route::STATUS_ACTIVE)
+            ->orderBy('code')
+            ->get();
     }
 
     public function updatedAttendanceCenter(): void
@@ -232,6 +259,135 @@ class RouteOptimizer extends Page
                 . ($unassigned > 0 ? ", {$unassigned} unassigned." : '.'))
             ->success()
             ->send();
+    }
+
+    public function saveToRoute(int $routeIndex): void
+    {
+        if (! auth()->user()?->can('update_route')) {
+            Notification::make()->title('No permission to save routes')->danger()->send();
+            return;
+        }
+
+        if (! $this->result) {
+            Notification::make()->title('Nothing to save — run Solve first')->warning()->send();
+            return;
+        }
+
+        $route = $this->result['routes'][$routeIndex] ?? null;
+        if ($route === null) {
+            Notification::make()->title('Result row not found')->danger()->send();
+            return;
+        }
+
+        $targetId = (int) ($this->saveRouteTargets[$routeIndex] ?? 0);
+        if ($targetId <= 0) {
+            Notification::make()->title('Pick a target Route from the dropdown first')->warning()->send();
+            return;
+        }
+
+        $target = Route::find($targetId);
+        if (! $target) {
+            Notification::make()->title('Route not found')->danger()->send();
+            return;
+        }
+
+        // Build the stops payload in the shape the planner expects.
+        $stops = [];
+        foreach ($route['stops'] as $step) {
+            if (($step['type'] ?? null) !== 'job') {
+                continue;
+            }
+            $lat = $step['lat'] ?? null;
+            $lng = $step['lng'] ?? null;
+            if ($lat === null || $lng === null) {
+                continue;
+            }
+            $stops[] = [
+                'id' => 'opt-' . uniqid('', true),
+                'name' => $step['student_name'] ?? 'Stop ' . (count($stops) + 1),
+                'lat' => (float) $lat,
+                'lng' => (float) $lng,
+                'order' => count($stops),
+                'student_id' => $step['job_id'] ?? null,
+            ];
+        }
+
+        $geometry = null;
+        if (is_string($route['geometry'] ?? null) && $route['geometry'] !== '') {
+            $geometry = [
+                'type' => 'LineString',
+                'coordinates' => $this->decodePolyline($route['geometry']),
+            ];
+        }
+
+        $path = new RoutePath([
+            'route_id' => $target->id,
+            'version_name' => 'optimizer ' . now()->format('Y-m-d H:i'),
+            'stops' => $stops,
+            'geometry' => $geometry,
+            'distance_meters' => (int) ($route['distance_meters'] ?? 0),
+            'duration_seconds' => (int) ($route['duration_seconds'] ?? 0),
+            'profile' => 'driving',
+            'is_active' => false, // don't clobber the currently-active version
+        ]);
+        $path->save();
+
+        $this->savedPathBadges[$routeIndex] = [
+            'path_id' => $path->id,
+            'route_id' => $target->id,
+            'route_code' => $target->code,
+            'version_name' => $path->version_name,
+            'planner_url' => RouteResource::getUrl('plan', ['record' => $target]),
+        ];
+
+        Notification::make()
+            ->title("Saved as {$path->version_name} on {$target->code}")
+            ->body('Not active — open the planner to review and activate.')
+            ->success()
+            ->send();
+    }
+
+    /**
+     * Decode a Google-encoded polyline string into an array of [lng, lat]
+     * pairs ready to drop into a GeoJSON LineString.
+     *
+     * Mirrors the JS decoder in the optimizer blade; precision 5.
+     *
+     * @return array<int, array{0: float, 1: float}>
+     */
+    private function decodePolyline(string $encoded): array
+    {
+        $index = 0;
+        $lat = 0;
+        $lng = 0;
+        $len = strlen($encoded);
+        $factor = 1e5;
+        $coords = [];
+
+        while ($index < $len) {
+            $shift = 0;
+            $result = 0;
+            do {
+                $byte = ord($encoded[$index++]) - 63;
+                $result |= ($byte & 0x1f) << $shift;
+                $shift += 5;
+            } while ($byte >= 0x20 && $index < $len);
+            $lat += ($result & 1) ? ~($result >> 1) : ($result >> 1);
+
+            $shift = 0;
+            $result = 0;
+            do {
+                $byte = ord($encoded[$index++]) - 63;
+                $result |= ($byte & 0x1f) << $shift;
+                $shift += 5;
+            } while ($byte >= 0x20 && $index < $len);
+            $lng += ($result & 1) ? ~($result >> 1) : ($result >> 1);
+
+            // GeoJSON order: [lng, lat]
+            $coords[] = [$lng / $factor, $lat / $factor];
+        }
+
+        return $coords;
     }
 
     /**
