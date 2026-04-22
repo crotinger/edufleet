@@ -35,44 +35,30 @@ class InspectionTemplateSeeder extends Seeder
             ],
         );
 
+        // Matches the district's standard 20-item paper pre-check sheet,
+        // in the same order drivers are used to. Critical flags applied to
+        // safety-of-life items that should block trip start on failure.
         $items = [
-            // Walkaround / exterior
-            ['Walkaround', 'Body — no new damage, panels secure', false],
-            ['Walkaround', 'No fluid leaks visible under bus', true],
-            ['Walkaround', 'Reflectors / license plate in place and visible', false],
-            // Lights
-            ['Lights', 'Headlights — high and low beam', true],
-            ['Lights', 'Turn signals — front, rear, side (amber + red)', true],
-            ['Lights', 'Brake lights functional', true],
-            ['Lights', '8-way flashers (amber + red) working', true],
-            ['Lights', 'Marker and clearance lights', false],
-            ['Lights', 'Stop arm deploys fully and lights activate', true],
-            ['Lights', 'Crossing gate deploys (if equipped)', false],
-            // Tires
-            ['Tires', 'Tread depth adequate on all tires', true],
-            ['Tires', 'No cuts, bulges, or foreign objects', true],
-            ['Tires', 'Lug nuts tight; no missing wheel fasteners', true],
-            ['Tires', 'Tire pressure within spec', false],
-            // Mirrors
-            ['Mirrors', 'All mirrors clean, secure, properly adjusted', false],
-            // Interior / controls
-            ['Interior', 'Horn works', true],
-            ['Interior', 'Windshield wipers and washer fluid operational', false],
-            ['Interior', 'Defroster / heater working', false],
-            ['Interior', 'All gauges functional (fuel, temp, oil, air)', false],
-            ['Interior', 'Driver seat belt in good condition', true],
-            // Emergency equipment
-            ['Emergency equipment', 'Fire extinguisher charged and secured', true],
-            ['Emergency equipment', 'First-aid kit and body-fluid cleanup kit present', true],
-            ['Emergency equipment', 'Reflective triangles / flares on board', false],
-            ['Emergency equipment', 'All emergency exits open freely from inside', true],
-            // Brakes
-            ['Brakes', 'Parking brake holds', true],
-            ['Brakes', 'Service brake firm and responsive', true],
-            ['Brakes', 'Air pressure builds and holds (air brake buses only)', true],
-            // Student area
-            ['Student area', 'Aisles clear, no items left from prior trip', false],
-            ['Student area', 'Seats and flooring secure, no torn upholstery with sharp edges', false],
+            ['Mirrors', 'Mirrors — Inside & Out', true],
+            ['Emergency equipment', 'Emergency Equipment', true],
+            ['Visibility', 'Windshield Wipers & Washers', false],
+            ['Brakes', 'Brakes — Foot Pedal, Hand', true],
+            ['Controls', 'Gauges, Buzzers & Horn', true],
+            ['Controls', 'Steering & Seatbelt', true],
+            ['Visibility', 'Heater / Defroster', false],
+            ['Interior', 'Interior Lights — Step & Dome', false],
+            ['Emergency exits', 'Emergency Exits — Windows, Door & Roof', true],
+            ['Tires', 'Fasteners — Belts', false],
+            ['Tires', 'Tires & Wheels', true],
+            ['Undercarriage', 'Exhaust System', false],
+            ['Undercarriage', 'Springs, Hangers & Body Clamps', false],
+            ['Lights', 'Headlights, Marker Lights', true],
+            ['Lights', 'Stopped Lights, Tail Lights & Backup Lights', true],
+            ['Lights', 'Signals — Turn, 4 Way', true],
+            ['Lights', 'Flashers — Yellow, Red, Stop Arm', true],
+            ['Student area', 'Child Check (Sign hung on back window of bus)', true],
+            ['Student area', 'Doors & Windows Closed', false],
+            ['Student area', 'Bus Clean & Fueled (Pick up trash, Sweep floors)', false],
         ];
 
         $this->syncItems($template, $items);
@@ -103,21 +89,32 @@ class InspectionTemplateSeeder extends Seeder
         $this->syncItems($template, $items);
     }
 
-    /** @param array<int, array{0: string, 1: string, 2: bool}> $items */
+    /**
+     * Sync items for a template. Because admins can edit items in the UI
+     * (including soft-deletions that we don't want to "resurrect" via a
+     * dedup-on-description rerun), we purge everything on the template
+     * first and recreate from the canonical list. This keeps the seeded
+     * template authoritative — run it when you want to reset to the
+     * shipped defaults.
+     *
+     * @param array<int, array{0: string, 1: string, 2: bool}> $items
+     */
     private function syncItems(InspectionTemplate $template, array $items): void
     {
+        // Wipe any existing items (including previously soft-deleted rows)
+        // so a re-run produces exactly the canonical set, in canonical order.
+        InspectionTemplateItem::withTrashed()
+            ->where('inspection_template_id', $template->id)
+            ->forceDelete();
+
         foreach ($items as $order => [$category, $description, $isCritical]) {
-            InspectionTemplateItem::updateOrCreate(
-                [
-                    'inspection_template_id' => $template->id,
-                    'description' => $description,
-                ],
-                [
-                    'category' => $category,
-                    'item_order' => $order,
-                    'is_critical' => $isCritical,
-                ],
-            );
+            InspectionTemplateItem::create([
+                'inspection_template_id' => $template->id,
+                'category' => $category,
+                'description' => $description,
+                'item_order' => $order,
+                'is_critical' => $isCritical,
+            ]);
         }
     }
 }
