@@ -140,7 +140,7 @@ services:
     depends_on:
       - osrm
     volumes:
-      - ./docker/vroom/config.yml:/conf/config.yml:ro
+      - ./docker/vroom/config.yml:/vroom-express/config.yml:ro
       - vroom_logs:/logs
     ports:
       - "127.0.0.1:${VROOM_PORT:-3000}:3000"

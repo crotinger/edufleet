@@ -1,14 +1,19 @@
 cliArgs:
-  baseurl: '/'
-  limit: '1mb'
-  logdir: '/logs/'
-  maxLocations: '1000'
-  maxVehicles: '200'
-  override: 'false'
+  geometry: false
   planmode: false
-  port: '3000'
+  threads: 4
+  explore: 5
+  limit: '1mb'
+  logdir: '/logs'
+  logsize: '100M'
+  maxlocations: 1000
+  maxvehicles: 200
+  override: true
+  path: ''
+  port: 3000
   router: 'osrm'
   timeout: 300000
+  baseurl: '/'
 
 routingServers:
   osrm:
