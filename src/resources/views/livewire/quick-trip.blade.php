@@ -264,8 +264,52 @@
                     </div>
                 </div>
                 <div class="qt-helper" style="margin-top: -0.5rem; margin-bottom: 0.875rem;">
-                    Eligible = students 2.5+ miles from school · Ineligible = under 2.5 miles. Leave blank if not applicable.
+                    Eligible = students 2.5+ miles from school · Ineligible = under 2.5 miles. Leave blank if filling the Ridership list below — counts auto-compute.
                 </div>
+
+                @if ($boardingEnabled && ! empty($boardingRoster))
+                    <div style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid #e2e8f0;">
+                        <div style="font-weight: 600; font-size: 0.8125rem; color: #334155; margin-bottom: 0.25rem;">Ridership — who rode today</div>
+                        <div style="font-size: 0.75rem; color: #64748b; margin-bottom: 0.5rem;">
+                            Tap each student who boarded. Eligible / ineligible counts auto-update from this list.
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                            <button type="button" class="qt-btn" style="flex: 1; padding: 0.45rem; font-size: 0.8125rem; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0;"
+                                    wire:click="markAllBoarded">All rode</button>
+                            <button type="button" class="qt-btn" style="flex: 1; padding: 0.45rem; font-size: 0.8125rem; background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1;"
+                                    wire:click="clearAllBoarded">Clear</button>
+                        </div>
+                        @php $boardedCount = count(array_filter($boardingChecked)); @endphp
+                        <div class="qt-helper" style="margin-bottom: 0.5rem; text-align: right;">
+                            <strong style="color: #0f172a;">{{ $boardedCount }}</strong>
+                            of {{ count($boardingRoster) }} marked on the bus
+                        </div>
+                        <ul style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.25rem; max-height: 28rem; overflow-y: auto;">
+                            @foreach ($boardingRoster as $sid => $student)
+                                @php $isOn = ! empty($boardingChecked[$sid]); @endphp
+                                <li wire:key="board-{{ $sid }}">
+                                    <button type="button"
+                                            wire:click="toggleBoarding({{ $sid }})"
+                                            style="width: 100%; text-align: left; padding: 0.65rem 0.75rem; border-radius: 0.375rem; font-size: 0.9375rem; display: flex; align-items: center; gap: 0.625rem;
+                                                   {{ $isOn
+                                                       ? 'background: #16a34a; color: #fff; border: 1px solid #15803d;'
+                                                       : 'background: #fff; color: #334155; border: 1px solid #cbd5e1;' }}">
+                                        <span aria-hidden="true" style="width: 1.25rem; height: 1.25rem; border-radius: 0.25rem; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.8125rem;
+                                              {{ $isOn ? 'background: #fff; color: #16a34a;' : 'background: #f1f5f9; color: transparent; border: 1px solid #cbd5e1;' }}">
+                                            @if ($isOn) ✓ @endif
+                                        </span>
+                                        <span style="flex: 1; min-width: 0;">
+                                            {{ $student['name'] }}
+                                            @if ($student['grade'])
+                                                <span style="font-size: 0.75rem; opacity: 0.75;">· Gr {{ $student['grade'] }}</span>
+                                            @endif
+                                        </span>
+                                    </button>
+                                </li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
 
                 @if (! empty($postInspectionItems))
                     <div style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid #e2e8f0;">

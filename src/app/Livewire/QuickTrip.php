@@ -57,6 +57,13 @@ class QuickTrip extends Component
     public array $postInspectionResults = [];
     public bool $postInspectionAffirmed = false;
 
+    // Ridership state (loaded when openTrip supports boardings — daily_route bus)
+    public bool $boardingEnabled = false;
+    /** @var array<int, array{name: string, grade: ?string}> */
+    public array $boardingRoster = [];
+    /** @var array<int, bool> */
+    public array $boardingChecked = [];
+
     public ?string $flash = null;
     public ?string $flashKind = null;
 
@@ -89,6 +96,7 @@ class QuickTrip extends Component
             $this->passengers = $this->openTrip->passengers;
             $this->purpose = $this->openTrip->purpose ?? '';
             $this->loadPostTripTemplate();
+            $this->loadBoardingRoster();
             return;
         }
 
@@ -278,6 +286,8 @@ class QuickTrip extends Component
         $this->step = 'end';
         $this->pin = '';
         $this->resetErrorBag();
+        $this->loadPostTripTemplate();
+        $this->loadBoardingRoster();
 
         $this->flash = $inspection->overall_result === PreTripInspection::RESULT_PASSED_WITH_DEFECTS
             ? 'Inspection submitted with non-critical defects (flagged for admin). Trip started — drive safe.'
@@ -285,6 +295,78 @@ class QuickTrip extends Component
         $this->flashKind = $inspection->overall_result === PreTripInspection::RESULT_PASSED_WITH_DEFECTS
             ? 'warning'
             : 'info';
+    }
+
+    private function loadBoardingRoster(): void
+    {
+        $this->boardingEnabled = false;
+        $this->boardingRoster = [];
+        $this->boardingChecked = [];
+
+        $trip = $this->openTrip;
+        if (! $trip || ! $trip->supportsBoardings() || ! $trip->route_id) {
+            return;
+        }
+
+        // Merge expected roster (from route_student) with any existing boardings.
+        $routeStudents = $trip->route?->students()->withPivot(['direction'])->get() ?? collect();
+        $existingBoardings = $trip->studentBoardings()
+            ->with(['student' => fn ($q) => $q->withTrashed()])
+            ->get()
+            ->keyBy('student_id');
+
+        // Collect the union of student ids
+        $studentsById = [];
+        foreach ($routeStudents as $s) {
+            $studentsById[$s->id] = $s;
+        }
+        foreach ($existingBoardings as $b) {
+            if ($b->student && ! isset($studentsById[$b->student_id])) {
+                $studentsById[$b->student_id] = $b->student;
+            }
+        }
+
+        if (empty($studentsById)) {
+            return;
+        }
+
+        $this->boardingEnabled = true;
+
+        // Stable order: by last_name then first_name
+        uasort($studentsById, fn ($a, $b) => strcmp(
+            strtolower($a->last_name . ' ' . $a->first_name),
+            strtolower($b->last_name . ' ' . $b->first_name),
+        ));
+
+        foreach ($studentsById as $id => $s) {
+            $this->boardingRoster[$id] = [
+                'name' => trim("{$s->last_name}, {$s->first_name}"),
+                'grade' => $s->grade,
+            ];
+            $this->boardingChecked[$id] = (bool) ($existingBoardings[$id]->boarded ?? false);
+        }
+    }
+
+    public function toggleBoarding(int $studentId): void
+    {
+        if (! isset($this->boardingChecked[$studentId])) {
+            return;
+        }
+        $this->boardingChecked[$studentId] = ! $this->boardingChecked[$studentId];
+    }
+
+    public function markAllBoarded(): void
+    {
+        foreach ($this->boardingChecked as $id => $_) {
+            $this->boardingChecked[$id] = true;
+        }
+    }
+
+    public function clearAllBoarded(): void
+    {
+        foreach ($this->boardingChecked as $id => $_) {
+            $this->boardingChecked[$id] = false;
+        }
     }
 
     private function loadPostTripTemplate(): void
@@ -399,6 +481,7 @@ class QuickTrip extends Component
         $this->step = 'end';
         $this->pin = '';
         $this->loadPostTripTemplate();
+        $this->loadBoardingRoster();
         $this->flash = "Trip started. Drive safe! When you return, rescan the same QR code to log the end of the trip.";
         $this->flashKind = 'info';
     }
@@ -566,6 +649,24 @@ class QuickTrip extends Component
                 }
 
                 $inspection->finalize();
+            }
+
+            // Persist ridership boardings if the driver filled them in.
+            // Boardings are authoritative — the TripStudentBoarding saved
+            // hook keeps trip.riders_eligible / riders_ineligible in sync.
+            if ($this->boardingEnabled && ! empty($this->boardingChecked)) {
+                foreach ($this->boardingChecked as $studentId => $boarded) {
+                    \App\Models\TripStudentBoarding::updateOrCreate(
+                        [
+                            'trip_id' => $this->openTrip->id,
+                            'student_id' => (int) $studentId,
+                        ],
+                        [
+                            'boarded' => (bool) $boarded,
+                            'boarded_at' => $boarded ? now() : null,
+                        ],
+                    );
+                }
             }
         });
 
