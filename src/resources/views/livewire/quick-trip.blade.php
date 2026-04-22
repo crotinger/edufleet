@@ -101,6 +101,12 @@
             @enderror
 
             <form wire:submit="submitInspection">
+                @if ($reservation)
+                    <div style="margin-bottom: 0.75rem; padding: 0.5rem 0.625rem; background: #ecfdf5; border-left: 3px solid #10b981; font-size: 0.8125rem; color: #065f46;">
+                        Reservation found — driver + purpose prefilled. Adjust if anything's wrong.
+                    </div>
+                @endif
+
                 <div class="qt-field">
                     <label class="qt-label" for="driver_name_ins">Your name</label>
                     <input id="driver_name_ins" class="qt-input" type="text" autocomplete="name"
@@ -109,10 +115,44 @@
                 </div>
 
                 <div class="qt-field">
-                    <label class="qt-label" for="start_odometer_ins">Current odometer</label>
-                    <input id="start_odometer_ins" class="qt-input" type="number" inputmode="numeric" pattern="[0-9]*"
-                           wire:model="start_odometer" min="0" required>
-                    @error('start_odometer')<div class="qt-error">{{ $message }}</div>@enderror
+                    <label class="qt-label" for="purpose_ins">Purpose</label>
+                    <input id="purpose_ins" class="qt-input" type="text"
+                           wire:model="purpose" placeholder="e.g. Parts pickup — McPherson" required maxlength="191">
+                    @error('purpose')<div class="qt-error">{{ $message }}</div>@enderror
+                </div>
+
+                <div class="qt-field">
+                    <label class="qt-label" for="trip_type_ins">Trip type</label>
+                    <select id="trip_type_ins" class="qt-select" wire:model="trip_type" required>
+                        @foreach (\App\Models\Trip::types() as $v => $l)
+                            @if ($v !== \App\Models\Trip::TYPE_DAILY_ROUTE)
+                                <option value="{{ $v }}">{{ $l }}</option>
+                            @endif
+                        @endforeach
+                    </select>
+                    @error('trip_type')<div class="qt-error">{{ $message }}</div>@enderror
+                </div>
+
+                <div class="qt-row">
+                    <div class="qt-field">
+                        <label class="qt-label" for="start_odometer_ins">Start odometer</label>
+                        <input id="start_odometer_ins" class="qt-input" type="number" inputmode="numeric" pattern="[0-9]*"
+                               wire:model="start_odometer" min="0" required>
+                        @error('start_odometer')<div class="qt-error">{{ $message }}</div>@enderror
+                    </div>
+                    <div class="qt-field">
+                        <label class="qt-label" for="passengers_ins">Passengers</label>
+                        <input id="passengers_ins" class="qt-input" type="number" inputmode="numeric" pattern="[0-9]*"
+                               wire:model="passengers" min="0" max="120" placeholder="0">
+                        @error('passengers')<div class="qt-error">{{ $message }}</div>@enderror
+                    </div>
+                </div>
+
+                <div style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid #e2e8f0;">
+                    <div style="font-weight: 600; font-size: 0.8125rem; color: #334155; margin-bottom: 0.25rem;">Safety inspection</div>
+                    <div style="font-size: 0.75rem; color: #64748b; margin-bottom: 0.5rem;">
+                        Tap Pass / Fail / N/A for every item. Failed critical items block trip start.
+                    </div>
                 </div>
 
                 @php
@@ -176,7 +216,7 @@
                 @error('inspectionAffirmed')<div class="qt-error">{{ $message }}</div>@enderror
 
                 <button type="submit" class="qt-btn qt-btn-primary" wire:loading.attr="disabled" style="margin-top: 0.875rem;">
-                    <span wire:loading.remove wire:target="submitInspection">Submit inspection</span>
+                    <span wire:loading.remove wire:target="submitInspection">Submit inspection &amp; start trip</span>
                     <span wire:loading wire:target="submitInspection">Submitting…</span>
                 </button>
             </form>

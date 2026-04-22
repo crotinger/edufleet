@@ -116,18 +116,27 @@ class QuickTrip extends Component
         }
     }
 
+    /**
+     * Submit the pre-trip inspection AND start the trip in one go, so
+     * drivers can't accidentally submit the inspection without starting
+     * the trip. A critical-item failure creates the inspection but no
+     * trip — the vehicle is out of service.
+     */
     public function submitInspection(): void
     {
         if ($this->inspectionTemplateId === null || empty($this->inspectionItems)) {
-            // No template — skip inspection entirely.
-            $this->step = 'start';
+            // No template — fall through to the legacy trip-start path.
+            $this->startTrip();
             return;
         }
 
-        $this->validate([
+        $data = $this->validate([
             'pin' => ['required', 'string', 'max:16'],
             'driver_name' => ['required', 'string', 'max:128'],
+            'purpose' => ['required', 'string', 'max:191'],
+            'trip_type' => ['required', 'string', 'in:' . implode(',', array_keys(Trip::types()))],
             'start_odometer' => ['required', 'integer', 'min:0', 'max:9999999'],
+            'passengers' => ['nullable', 'integer', 'min:0', 'max:120'],
             'inspectionAffirmed' => ['accepted'],
         ], [
             'inspectionAffirmed.accepted' => 'You must affirm you personally performed this inspection.',
@@ -138,7 +147,12 @@ class QuickTrip extends Component
             return;
         }
 
-        // Every item needs a result.
+        if ($data['trip_type'] === Trip::TYPE_DAILY_ROUTE) {
+            $this->addError('trip_type', 'Daily route trips are logged by district employees in the admin panel, not here.');
+            return;
+        }
+
+        // Every checklist item needs a result.
         $missing = [];
         foreach ($this->inspectionItems as $itemId => $item) {
             $r = $this->inspectionResults[$itemId]['result'] ?? null;
@@ -151,23 +165,23 @@ class QuickTrip extends Component
             return;
         }
 
-        // Persist the inspection + results, then finalize to derive overall_result.
-        $inspection = DB::transaction(function (): PreTripInspection {
-            // Resolve a Driver by name if we can — otherwise leave null and
-            // rely on the signature_name for attribution.
-            $driverId = \App\Models\Driver::query()
-                ->whereRaw("lower(first_name || ' ' || last_name) = ?", [strtolower(trim($this->driver_name))])
-                ->orWhereRaw("lower(last_name || ', ' || first_name) = ?", [strtolower(trim($this->driver_name))])
-                ->value('id');
+        // Resolve a Driver by name if we can — otherwise leave null and
+        // rely on signature_name / driver_name_override for attribution.
+        $driverId = \App\Models\Driver::query()
+            ->whereRaw("lower(first_name || ' ' || last_name) = ?", [strtolower(trim($this->driver_name))])
+            ->orWhereRaw("lower(last_name || ', ' || first_name) = ?", [strtolower(trim($this->driver_name))])
+            ->value('id');
 
+        $result = DB::transaction(function () use ($data, $driverId): array {
+            // 1. Persist the inspection + per-item results; finalize.
             $inspection = PreTripInspection::create([
                 'vehicle_id' => $this->vehicle->id,
                 'driver_id' => $driverId,
                 'trip_id' => null,
                 'inspection_template_id' => $this->inspectionTemplateId,
                 'started_at' => now(),
-                'odometer_miles' => $this->start_odometer,
-                'signature_name' => trim($this->driver_name),
+                'odometer_miles' => $data['start_odometer'],
+                'signature_name' => trim($data['driver_name']),
                 'overall_result' => PreTripInspection::RESULT_IN_PROGRESS,
             ]);
 
@@ -185,11 +199,53 @@ class QuickTrip extends Component
             }
 
             $inspection->finalize();
-            return $inspection->fresh();
+            $inspection = $inspection->fresh();
+
+            // 2. If critical failure, stop here — no trip is created.
+            if ($inspection->overall_result === PreTripInspection::RESULT_FAILED) {
+                return ['inspection' => $inspection, 'trip' => null];
+            }
+
+            // 3. Otherwise, start the trip atomically with the inspection.
+            $reservation = $this->reservation;
+            if (! $reservation) {
+                $reservation = TripReservation::create([
+                    'vehicle_id' => $this->vehicle->id,
+                    'source' => TripReservation::SOURCE_SELF_SERVICE,
+                    'purpose' => $data['purpose'],
+                    'planned_trip_type' => $data['trip_type'],
+                    'expected_driver_name' => $data['driver_name'],
+                    'expected_passengers' => $data['passengers'],
+                    'issued_at' => now(),
+                    'status' => TripReservation::STATUS_CLAIMED,
+                ]);
+            } else {
+                $reservation->update(['status' => TripReservation::STATUS_CLAIMED]);
+            }
+
+            $trip = Trip::create([
+                'vehicle_id' => $this->vehicle->id,
+                'driver_id' => null,
+                'driver_name_override' => $data['driver_name'],
+                'trip_type' => $data['trip_type'],
+                'purpose' => $data['purpose'],
+                'started_at' => now(),
+                'start_odometer' => $data['start_odometer'],
+                'passengers' => $data['passengers'],
+                'status' => Trip::STATUS_PENDING,
+                'reservation_id' => $reservation->id,
+            ]);
+
+            $reservation->update(['trip_id' => $trip->id]);
+            $inspection->update(['trip_id' => $trip->id]);
+
+            return ['inspection' => $inspection->fresh(), 'trip' => $trip->fresh(), 'reservation' => $reservation];
         });
 
-        // If a critical item failed, this is a do-not-operate situation.
-        if ($inspection->overall_result === PreTripInspection::RESULT_FAILED) {
+        $inspection = $result['inspection'];
+
+        if ($result['trip'] === null) {
+            // Critical fail — show the do-not-operate screen.
             $this->failedCriticalItems = $inspection->failedResults()
                 ->where('was_critical', true)
                 ->get()
@@ -199,21 +255,22 @@ class QuickTrip extends Component
                     'comment' => $r->comment,
                 ])
                 ->all();
-            $this->completedInspectionId = null; // inspection is done but trip is blocked
             $this->step = 'failed_critical';
             $this->pin = '';
             return;
         }
 
-        // Passed or passed-with-defects: advance to the trip-start form.
+        // Success — trip is started. Advance to the end-trip step.
+        $this->reservation = $result['reservation'] ?? $this->reservation;
+        $this->openTrip = $result['trip'];
         $this->completedInspectionId = $inspection->id;
-        $this->step = 'start';
-        $this->pin = ''; // driver re-enters PIN at trip start to confirm
+        $this->step = 'end';
+        $this->pin = '';
         $this->resetErrorBag();
 
         $this->flash = $inspection->overall_result === PreTripInspection::RESULT_PASSED_WITH_DEFECTS
-            ? 'Inspection submitted with non-critical defects — trip may proceed. Admin will review.'
-            : 'Inspection passed. Enter trip details below.';
+            ? 'Inspection submitted with non-critical defects (flagged for admin). Trip started — drive safe.'
+            : 'Inspection passed. Trip started — drive safe! When you return, rescan the QR to log end of trip.';
         $this->flashKind = $inspection->overall_result === PreTripInspection::RESULT_PASSED_WITH_DEFECTS
             ? 'warning'
             : 'info';
