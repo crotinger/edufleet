@@ -90,3 +90,10 @@ $RECYCLE.BIN/
 # -------- Ad-hoc / local-only --------------------------------------------------
 /*.local
 /local/
+
+# Local-only seeders — populate with test data specific to the operator's
+# environment (real district addresses, etc.) that should never be committed.
+# Name them *LocalSeeder.php or *LocalTestSeeder.php; run via:
+#   php artisan db:seed --class=FooLocalSeeder
+/src/database/seeders/*LocalSeeder.php
+/src/database/seeders/*LocalTestSeeder.php
