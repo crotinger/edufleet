@@ -23,6 +23,11 @@ class InspectionTemplatesTable
             ->defaultSort('name')
             ->modifyQueryUsing(fn ($query) => $query->withCount('items'))
             ->columns([
+                TextColumn::make('inspection_type')
+                    ->label('Type')
+                    ->badge()
+                    ->formatStateUsing(fn (?string $state) => \App\Models\InspectionTemplate::inspectionTypes()[$state] ?? $state)
+                    ->color(fn (?string $state) => $state === \App\Models\InspectionTemplate::TYPE_POST_TRIP ? 'warning' : 'primary'),
                 TextColumn::make('name')
                     ->searchable()
                     ->sortable(),
@@ -40,6 +45,7 @@ class InspectionTemplatesTable
                     ->sortable(),
             ])
             ->filters([
+                SelectFilter::make('inspection_type')->options(\App\Models\InspectionTemplate::inspectionTypes()),
                 SelectFilter::make('vehicle_type')->options(Vehicle::types()),
                 TrashedFilter::make(),
             ])

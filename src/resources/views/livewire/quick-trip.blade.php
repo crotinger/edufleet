@@ -267,6 +267,60 @@
                     Eligible = students 2.5+ miles from school · Ineligible = under 2.5 miles. Leave blank if not applicable.
                 </div>
 
+                @if (! empty($postInspectionItems))
+                    <div style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid #e2e8f0;">
+                        <div style="font-weight: 600; font-size: 0.8125rem; color: #334155; margin-bottom: 0.25rem;">Post-trip inspection</div>
+                        <div style="font-size: 0.75rem; color: #64748b; margin-bottom: 0.5rem;">
+                            Tap Pass / Fail / N/A for every item. Failed items create a defect for admin review.
+                        </div>
+                    </div>
+
+                    @error('postInspection')
+                        <div class="qt-error" style="margin-bottom: 0.75rem;">{{ $message }}</div>
+                    @enderror
+
+                    @php
+                        $postGrouped = collect($postInspectionItems)->groupBy('category', preserveKeys: true);
+                    @endphp
+                    @foreach ($postGrouped as $category => $rows)
+                        <div wire:key="pcat-{{ md5($category) }}" style="margin-top: 0.75rem;">
+                            <div style="font-weight: 600; font-size: 0.8125rem; color: #475569; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.5rem;">
+                                {{ $category }}
+                            </div>
+                            @foreach ($rows as $itemId => $item)
+                                @php $current = $postInspectionResults[$itemId]['result'] ?? null; @endphp
+                                <div wire:key="pitem-{{ $itemId }}" style="padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">
+                                    <div style="font-size: 0.9375rem; line-height: 1.3; margin-bottom: 0.5rem;">
+                                        {{ $item['description'] }}
+                                        @if ($item['is_critical'])
+                                            <span style="margin-left: 0.25rem; font-size: 0.6875rem; padding: 0.1rem 0.35rem; background: #dc2626; color: #fff; border-radius: 0.25rem; vertical-align: 0.15em;">critical</span>
+                                        @endif
+                                    </div>
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.25rem;">
+                                        <button wire:key="pbtn-pass-{{ $itemId }}" type="button" wire:click="setPostInspectionResult({{ $itemId }}, 'pass')"
+                                                class="qt-btn" style="padding: 0.5rem; font-size: 0.875rem; {{ $current === 'pass' ? 'background: #16a34a; color: #fff; border-color: #16a34a;' : 'background: #fff; color: #334155; border: 1px solid #cbd5e1;' }}">Pass</button>
+                                        <button wire:key="pbtn-fail-{{ $itemId }}" type="button" wire:click="setPostInspectionResult({{ $itemId }}, 'fail')"
+                                                class="qt-btn" style="padding: 0.5rem; font-size: 0.875rem; {{ $current === 'fail' ? 'background: #dc2626; color: #fff; border-color: #dc2626;' : 'background: #fff; color: #334155; border: 1px solid #cbd5e1;' }}">Fail</button>
+                                        <button wire:key="pbtn-na-{{ $itemId }}" type="button" wire:click="setPostInspectionResult({{ $itemId }}, 'na')"
+                                                class="qt-btn" style="padding: 0.5rem; font-size: 0.875rem; {{ $current === 'na' ? 'background: #64748b; color: #fff; border-color: #64748b;' : 'background: #fff; color: #334155; border: 1px solid #cbd5e1;' }}">N/A</button>
+                                    </div>
+                                    @if ($current === 'fail')
+                                        <input wire:key="pcomment-{{ $itemId }}" type="text" placeholder="Describe the issue (optional)"
+                                               wire:model="postInspectionResults.{{ $itemId }}.comment"
+                                               class="qt-input" style="margin-top: 0.4rem; font-size: 0.875rem;">
+                                    @endif
+                                </div>
+                            @endforeach
+                        </div>
+                    @endforeach
+
+                    <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.875rem; padding: 0.75rem; background: #f8fafc; border-radius: 0.375rem; margin: 0.5rem 0 0.875rem; cursor: pointer;">
+                        <input type="checkbox" wire:model="postInspectionAffirmed" style="margin-top: 0.125rem;">
+                        <span>I affirm I personally performed this post-trip inspection and the results above are accurate.</span>
+                    </label>
+                    @error('postInspectionAffirmed')<div class="qt-error">{{ $message }}</div>@enderror
+                @endif
+
                 <div class="qt-field">
                     <label class="qt-label" for="pin">PIN (from the label)</label>
                     <input id="pin" class="qt-input" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
@@ -275,7 +329,7 @@
                 </div>
 
                 <button type="submit" class="qt-btn qt-btn-success" wire:loading.attr="disabled">
-                    <span wire:loading.remove wire:target="endTrip">End trip & submit</span>
+                    <span wire:loading.remove wire:target="endTrip">End trip &amp; submit</span>
                     <span wire:loading wire:target="endTrip">Submitting…</span>
                 </button>
             </form>

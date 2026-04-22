@@ -3,6 +3,8 @@
 namespace App\Livewire;
 
 use App\Models\InspectionTemplate;
+use App\Models\PostTripInspection;
+use App\Models\PostTripInspectionResult;
 use App\Models\PreTripInspection;
 use App\Models\PreTripInspectionResult;
 use App\Models\Trip;
@@ -47,6 +49,14 @@ class QuickTrip extends Component
     /** @var array<int, array{category: string, description: string, comment: ?string}> */
     public array $failedCriticalItems = [];
 
+    // Post-trip inspection state (mirrors pre-trip — loaded when we hit step=end)
+    public ?int $postInspectionTemplateId = null;
+    /** @var array<int, array{description: string, category: string, is_critical: bool}> */
+    public array $postInspectionItems = [];
+    /** @var array<int, array{result?: string, comment?: string}> */
+    public array $postInspectionResults = [];
+    public bool $postInspectionAffirmed = false;
+
     public ?string $flash = null;
     public ?string $flashKind = null;
 
@@ -78,6 +88,7 @@ class QuickTrip extends Component
             $this->start_odometer = $this->openTrip->start_odometer;
             $this->passengers = $this->openTrip->passengers;
             $this->purpose = $this->openTrip->purpose ?? '';
+            $this->loadPostTripTemplate();
             return;
         }
 
@@ -276,6 +287,40 @@ class QuickTrip extends Component
             : 'info';
     }
 
+    private function loadPostTripTemplate(): void
+    {
+        $template = InspectionTemplate::forVehicle($this->vehicle, InspectionTemplate::TYPE_POST_TRIP);
+        if (! $template) {
+            $this->postInspectionTemplateId = null;
+            $this->postInspectionItems = [];
+            $this->postInspectionResults = [];
+            return;
+        }
+
+        $this->postInspectionTemplateId = $template->id;
+        $this->postInspectionItems = $template->items
+            ->mapWithKeys(fn ($item) => [$item->id => [
+                'description' => $item->description,
+                'category' => $item->category,
+                'is_critical' => (bool) $item->is_critical,
+            ]])
+            ->all();
+        foreach ($this->postInspectionItems as $itemId => $_) {
+            $this->postInspectionResults[$itemId] ??= ['result' => null, 'comment' => ''];
+        }
+    }
+
+    public function setPostInspectionResult(int $itemId, string $result): void
+    {
+        if (! in_array($result, [PostTripInspectionResult::PASS, PostTripInspectionResult::FAIL, PostTripInspectionResult::NA], true)) {
+            return;
+        }
+        $this->postInspectionResults[$itemId]['result'] = $result;
+        if ($result !== PostTripInspectionResult::FAIL) {
+            $this->postInspectionResults[$itemId]['comment'] = '';
+        }
+    }
+
     public function setInspectionResult(int $itemId, string $result): void
     {
         if (! in_array($result, [PreTripInspectionResult::PASS, PreTripInspectionResult::FAIL, PreTripInspectionResult::NA], true)) {
@@ -353,6 +398,7 @@ class QuickTrip extends Component
         $this->openTrip = $trip->fresh();
         $this->step = 'end';
         $this->pin = '';
+        $this->loadPostTripTemplate();
         $this->flash = "Trip started. Drive safe! When you return, rescan the same QR code to log the end of the trip.";
         $this->flashKind = 'info';
     }
@@ -440,14 +486,22 @@ class QuickTrip extends Component
             return;
         }
 
-        $data = $this->validate([
+        $rules = [
             'pin' => ['required', 'string', 'max:16'],
             'end_odometer' => ['required', 'integer', 'min:' . ((int) $this->openTrip->start_odometer), 'max:9999999'],
             'passengers' => ['nullable', 'integer', 'min:0', 'max:120'],
             'riders_eligible' => ['nullable', 'integer', 'min:0', 'max:120'],
             'riders_ineligible' => ['nullable', 'integer', 'min:0', 'max:120'],
-        ], [
+        ];
+
+        $hasPostTrip = $this->postInspectionTemplateId !== null && ! empty($this->postInspectionItems);
+        if ($hasPostTrip) {
+            $rules['postInspectionAffirmed'] = ['accepted'];
+        }
+
+        $data = $this->validate($rules, [
             'end_odometer.min' => 'End odometer must be at least :min (where the trip started).',
+            'postInspectionAffirmed.accepted' => 'You must affirm you personally performed the post-trip inspection.',
         ]);
 
         if (trim($this->pin) !== (string) $this->vehicle->quicktrip_pin) {
@@ -455,15 +509,66 @@ class QuickTrip extends Component
             return;
         }
 
-        $this->openTrip->update([
-            'ended_at' => now(),
-            'end_odometer' => $data['end_odometer'],
-            'passengers' => $data['passengers'] ?? $this->openTrip->passengers,
-            'riders_eligible' => $data['riders_eligible'],
-            'riders_ineligible' => $data['riders_ineligible'],
-        ]);
+        if ($hasPostTrip) {
+            $missing = [];
+            foreach ($this->postInspectionItems as $itemId => $item) {
+                $r = $this->postInspectionResults[$itemId]['result'] ?? null;
+                if (! in_array($r, [PostTripInspectionResult::PASS, PostTripInspectionResult::FAIL, PostTripInspectionResult::NA], true)) {
+                    $missing[] = $item['description'];
+                }
+            }
+            if ($missing !== []) {
+                $this->addError('postInspection', 'Answer every post-trip item: ' . implode('; ', array_slice($missing, 0, 3)) . (count($missing) > 3 ? ' + ' . (count($missing) - 3) . ' more' : ''));
+                return;
+            }
+        }
 
-        // Reservation stays 'claimed' until an admin approves the trip (then → returned).
+        // Resolve a driver by name for attribution on the post-trip record.
+        $driverName = $this->openTrip->driver_name_override ?? $this->driver_name;
+        $driverId = $driverName
+            ? \App\Models\Driver::query()
+                ->whereRaw("lower(first_name || ' ' || last_name) = ?", [strtolower(trim($driverName))])
+                ->orWhereRaw("lower(last_name || ', ' || first_name) = ?", [strtolower(trim($driverName))])
+                ->value('id')
+            : null;
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($data, $hasPostTrip, $driverId, $driverName) {
+            $this->openTrip->update([
+                'ended_at' => now(),
+                'end_odometer' => $data['end_odometer'],
+                'passengers' => $data['passengers'] ?? $this->openTrip->passengers,
+                'riders_eligible' => $data['riders_eligible'],
+                'riders_ineligible' => $data['riders_ineligible'],
+            ]);
+
+            if ($hasPostTrip) {
+                $inspection = PostTripInspection::create([
+                    'vehicle_id' => $this->vehicle->id,
+                    'driver_id' => $driverId,
+                    'trip_id' => $this->openTrip->id,
+                    'inspection_template_id' => $this->postInspectionTemplateId,
+                    'completed_at' => now(),
+                    'odometer_miles' => $data['end_odometer'],
+                    'signature_name' => $driverName ? trim($driverName) : null,
+                ]);
+
+                foreach ($this->postInspectionItems as $itemId => $item) {
+                    $row = $this->postInspectionResults[$itemId];
+                    PostTripInspectionResult::create([
+                        'post_trip_inspection_id' => $inspection->id,
+                        'inspection_template_item_id' => $itemId,
+                        'category_snapshot' => $item['category'],
+                        'description_snapshot' => $item['description'],
+                        'was_critical' => $item['is_critical'],
+                        'result' => $row['result'],
+                        'comment' => trim((string) ($row['comment'] ?? '')) ?: null,
+                    ]);
+                }
+
+                $inspection->finalize();
+            }
+        });
+
         $this->step = 'done';
         $this->flash = "Trip submitted for review. Thanks — the transportation director will approve it shortly.";
         $this->flashKind = 'success';

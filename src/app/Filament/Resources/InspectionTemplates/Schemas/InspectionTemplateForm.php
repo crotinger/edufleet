@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\InspectionTemplates\Schemas;
 
+use App\Models\InspectionTemplate;
 use App\Models\Vehicle;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
@@ -20,15 +21,21 @@ class InspectionTemplateForm
                 Section::make()->schema([
                     Grid::make(2)->schema([
                         TextInput::make('name')->required()->maxLength(128),
+                        Select::make('inspection_type')
+                            ->label('Inspection type')
+                            ->options(InspectionTemplate::inspectionTypes())
+                            ->default(InspectionTemplate::TYPE_PRE_TRIP)
+                            ->required()
+                            ->native(false),
                         Select::make('vehicle_type')
                             ->label('Applies to')
                             ->options(['' => 'Any vehicle', ...Vehicle::types()])
                             ->default('')
                             ->dehydrateStateUsing(fn ($state) => $state === '' ? null : $state)
                             ->native(false)
-                            ->helperText('Leave blank to apply to any vehicle — type-scoped templates take precedence.'),
+                            ->helperText('Leave blank to apply to any vehicle.'),
+                        Toggle::make('active')->default(true)->label('Active'),
                     ]),
-                    Toggle::make('active')->default(true)->label('Active'),
                     Textarea::make('description')->rows(2)->columnSpanFull(),
                 ])->columnSpanFull(),
             ]);
