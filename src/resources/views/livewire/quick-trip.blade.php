@@ -119,13 +119,13 @@
                     $grouped = collect($inspectionItems)->groupBy('category');
                 @endphp
                 @foreach ($grouped as $category => $rows)
-                    <div style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid #e2e8f0;">
+                    <div wire:key="cat-{{ md5($category) }}" style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid #e2e8f0;">
                         <div style="font-weight: 600; font-size: 0.8125rem; color: #475569; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.5rem;">
                             {{ $category }}
                         </div>
                         @foreach ($rows as $itemId => $item)
                             @php $current = $inspectionResults[$itemId]['result'] ?? null; @endphp
-                            <div style="padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">
+                            <div wire:key="item-{{ $itemId }}" style="padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">
                                 <div style="font-size: 0.9375rem; line-height: 1.3; margin-bottom: 0.5rem;">
                                     {{ $item['description'] }}
                                     @if ($item['is_critical'])
@@ -133,21 +133,21 @@
                                     @endif
                                 </div>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.25rem;">
-                                    <button type="button" wire:click="setInspectionResult({{ $itemId }}, 'pass')"
+                                    <button wire:key="btn-pass-{{ $itemId }}" type="button" wire:click="setInspectionResult({{ $itemId }}, 'pass')"
                                             class="qt-btn" style="padding: 0.5rem; font-size: 0.875rem; {{ $current === 'pass' ? 'background: #16a34a; color: #fff; border-color: #16a34a;' : 'background: #fff; color: #334155; border: 1px solid #cbd5e1;' }}">
                                         Pass
                                     </button>
-                                    <button type="button" wire:click="setInspectionResult({{ $itemId }}, 'fail')"
+                                    <button wire:key="btn-fail-{{ $itemId }}" type="button" wire:click="setInspectionResult({{ $itemId }}, 'fail')"
                                             class="qt-btn" style="padding: 0.5rem; font-size: 0.875rem; {{ $current === 'fail' ? 'background: #dc2626; color: #fff; border-color: #dc2626;' : 'background: #fff; color: #334155; border: 1px solid #cbd5e1;' }}">
                                         Fail
                                     </button>
-                                    <button type="button" wire:click="setInspectionResult({{ $itemId }}, 'na')"
+                                    <button wire:key="btn-na-{{ $itemId }}" type="button" wire:click="setInspectionResult({{ $itemId }}, 'na')"
                                             class="qt-btn" style="padding: 0.5rem; font-size: 0.875rem; {{ $current === 'na' ? 'background: #64748b; color: #fff; border-color: #64748b;' : 'background: #fff; color: #334155; border: 1px solid #cbd5e1;' }}">
                                         N/A
                                     </button>
                                 </div>
                                 @if ($current === 'fail')
-                                    <input type="text" placeholder="Describe the defect (optional)"
+                                    <input wire:key="comment-{{ $itemId }}" type="text" placeholder="Describe the defect (optional)"
                                            wire:model="inspectionResults.{{ $itemId }}.comment"
                                            class="qt-input" style="margin-top: 0.4rem; font-size: 0.875rem;">
                                 @endif
