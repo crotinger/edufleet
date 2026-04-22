@@ -62,6 +62,122 @@
             </form>
         </div>
 
+    @elseif ($step === 'failed_critical')
+        <div class="qt-card" style="border-color: #fca5a5; background: #fef2f2;">
+            <div style="margin-bottom: 0.875rem;">
+                <span class="qt-badge" style="background: #dc2626; color: #fff;">Do not operate</span>
+            </div>
+            <h2 style="margin: 0 0 0.5rem; font-size: 1.125rem; color: #7f1d1d;">Safety-critical items failed inspection</h2>
+            <p style="margin: 0 0 1rem; font-size: 0.9375rem; color: #7f1d1d;">
+                Report the vehicle as out-of-service to the transportation director. Do not start a trip in this vehicle.
+            </p>
+            <ul style="margin: 0 0 1rem; padding-left: 1.25rem; font-size: 0.875rem; color: #991b1b;">
+                @foreach ($failedCriticalItems as $fail)
+                    <li style="margin-bottom: 0.35rem;">
+                        <strong>{{ $fail['category'] }}</strong> — {{ $fail['description'] }}
+                        @if ($fail['comment'])
+                            <div style="color: #991b1b; font-style: italic; font-size: 0.8125rem;">{{ $fail['comment'] }}</div>
+                        @endif
+                    </li>
+                @endforeach
+            </ul>
+            <p style="margin: 0; font-size: 0.8125rem; color: #64748b;">
+                The inspection has been logged. An admin will triage the defects and dispatch maintenance.
+            </p>
+        </div>
+
+    @elseif ($step === 'inspection')
+        <div class="qt-card">
+            <div style="margin-bottom: 0.875rem;">
+                <span class="qt-badge">Pre-trip inspection</span>
+            </div>
+            <p style="margin: 0 0 1rem; font-size: 0.875rem; color: #475569;">
+                Walk around and verify each item. Tap <strong>Pass</strong>, <strong>Fail</strong>, or <strong>N/A</strong>.
+                A failed critical item blocks trip start.
+            </p>
+
+            @error('inspection')
+                <div class="qt-error" style="margin-bottom: 0.75rem;">{{ $message }}</div>
+            @enderror
+
+            <form wire:submit="submitInspection">
+                <div class="qt-field">
+                    <label class="qt-label" for="driver_name_ins">Your name</label>
+                    <input id="driver_name_ins" class="qt-input" type="text" autocomplete="name"
+                           wire:model="driver_name" required maxlength="128">
+                    @error('driver_name')<div class="qt-error">{{ $message }}</div>@enderror
+                </div>
+
+                <div class="qt-field">
+                    <label class="qt-label" for="start_odometer_ins">Current odometer</label>
+                    <input id="start_odometer_ins" class="qt-input" type="number" inputmode="numeric" pattern="[0-9]*"
+                           wire:model="start_odometer" min="0" required>
+                    @error('start_odometer')<div class="qt-error">{{ $message }}</div>@enderror
+                </div>
+
+                @php
+                    $grouped = collect($inspectionItems)->groupBy('category');
+                @endphp
+                @foreach ($grouped as $category => $rows)
+                    <div style="margin-top: 1rem; padding-top: 0.5rem; border-top: 1px solid #e2e8f0;">
+                        <div style="font-weight: 600; font-size: 0.8125rem; color: #475569; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.5rem;">
+                            {{ $category }}
+                        </div>
+                        @foreach ($rows as $itemId => $item)
+                            @php $current = $inspectionResults[$itemId]['result'] ?? null; @endphp
+                            <div style="padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9;">
+                                <div style="font-size: 0.9375rem; line-height: 1.3; margin-bottom: 0.5rem;">
+                                    {{ $item['description'] }}
+                                    @if ($item['is_critical'])
+                                        <span style="margin-left: 0.25rem; font-size: 0.6875rem; padding: 0.1rem 0.35rem; background: #dc2626; color: #fff; border-radius: 0.25rem; vertical-align: 0.15em;">critical</span>
+                                    @endif
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.25rem;">
+                                    <button type="button" wire:click="setInspectionResult({{ $itemId }}, 'pass')"
+                                            class="qt-btn" style="padding: 0.5rem; font-size: 0.875rem; {{ $current === 'pass' ? 'background: #16a34a; color: #fff; border-color: #16a34a;' : 'background: #fff; color: #334155; border: 1px solid #cbd5e1;' }}">
+                                        Pass
+                                    </button>
+                                    <button type="button" wire:click="setInspectionResult({{ $itemId }}, 'fail')"
+                                            class="qt-btn" style="padding: 0.5rem; font-size: 0.875rem; {{ $current === 'fail' ? 'background: #dc2626; color: #fff; border-color: #dc2626;' : 'background: #fff; color: #334155; border: 1px solid #cbd5e1;' }}">
+                                        Fail
+                                    </button>
+                                    <button type="button" wire:click="setInspectionResult({{ $itemId }}, 'na')"
+                                            class="qt-btn" style="padding: 0.5rem; font-size: 0.875rem; {{ $current === 'na' ? 'background: #64748b; color: #fff; border-color: #64748b;' : 'background: #fff; color: #334155; border: 1px solid #cbd5e1;' }}">
+                                        N/A
+                                    </button>
+                                </div>
+                                @if ($current === 'fail')
+                                    <input type="text" placeholder="Describe the defect (optional)"
+                                           wire:model="inspectionResults.{{ $itemId }}.comment"
+                                           class="qt-input" style="margin-top: 0.4rem; font-size: 0.875rem;">
+                                @endif
+                            </div>
+                        @endforeach
+                    </div>
+                @endforeach
+
+                <div class="qt-field" style="margin-top: 1rem;">
+                    <label class="qt-label" for="pin_ins">PIN (from the label)</label>
+                    <input id="pin_ins" class="qt-input" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+                           wire:model="pin" required maxlength="16">
+                    @error('pin')<div class="qt-error">{{ $message }}</div>@enderror
+                </div>
+
+                <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.875rem; padding: 0.75rem; background: #f8fafc; border-radius: 0.375rem; margin-top: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" wire:model="inspectionAffirmed" style="margin-top: 0.125rem;">
+                    <span>
+                        I affirm I personally performed this inspection and the results above are accurate.
+                    </span>
+                </label>
+                @error('inspectionAffirmed')<div class="qt-error">{{ $message }}</div>@enderror
+
+                <button type="submit" class="qt-btn qt-btn-primary" wire:loading.attr="disabled" style="margin-top: 0.875rem;">
+                    <span wire:loading.remove wire:target="submitInspection">Submit inspection</span>
+                    <span wire:loading wire:target="submitInspection">Submitting…</span>
+                </button>
+            </form>
+        </div>
+
     @elseif ($step === 'end' && $openTrip)
         <div class="qt-card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.875rem;">
