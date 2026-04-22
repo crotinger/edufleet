@@ -35,4 +35,12 @@ return [
         ],
     ],
 
+    'osrm' => [
+        'url' => env('OSRM_URL', 'https://router.project-osrm.org'),
+    ],
+
+    'vroom' => [
+        'url' => env('VROOM_URL'),
+    ],
+
 ];

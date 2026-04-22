@@ -20,10 +20,17 @@ use Illuminate\Support\Facades\Log;
  */
 class OsrmClient
 {
-    public function __construct(
-        private readonly string $baseUrl = 'https://router.project-osrm.org',
-        private readonly int $timeoutSeconds = 20,
-    ) {}
+    private readonly string $baseUrl;
+    private readonly int $timeoutSeconds;
+
+    public function __construct(?string $baseUrl = null, int $timeoutSeconds = 20)
+    {
+        $this->baseUrl = rtrim(
+            $baseUrl ?? (string) config('services.osrm.url', 'https://router.project-osrm.org'),
+            '/'
+        );
+        $this->timeoutSeconds = $timeoutSeconds;
+    }
 
     /**
      * Trace the route through the given coordinates in the given order.
