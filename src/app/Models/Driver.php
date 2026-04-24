@@ -66,7 +66,7 @@ class Driver extends Model
         return [
             'A' => 'Class A (combination >26,000 lb, towed >10,000 lb)',
             'B' => 'Class B (single vehicle >26,000 lb — most school buses)',
-            'C' => 'Class C (<26,000 lb with passenger/hazmat endorsement)',
+            'C' => 'Class C (standard non-commercial, or CDL C with endorsement)',
         ];
     }
 

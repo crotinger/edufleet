@@ -53,13 +53,27 @@ class DrugAlcoholCompliance extends Page
         ];
     }
 
-    /** CDL pool — drivers subject to random testing. */
+    /** CDL pool — drivers subject to random testing.
+     *
+     * §382 applies to CDL holders. Class A and B are always CDLs, but "Class C"
+     * is ambiguous — most states (including Kansas) issue plain Class C as the
+     * standard non-commercial license. A Class C driver is only a CDL holder
+     * when they carry at least one CDL endorsement (P, S, N, T, H, or X), so
+     * staff with a regular Class C license are correctly excluded.
+     */
     public function getPool(): Collection
     {
         return Driver::query()
             ->where('status', Driver::STATUS_ACTIVE)
             ->whereNotNull('license_number')
-            ->whereIn('license_class', ['A', 'B', 'C'])
+            ->where(function ($q) {
+                $q->whereIn('license_class', ['A', 'B'])
+                    ->orWhere(function ($q) {
+                        $q->where('license_class', 'C')
+                            ->whereNotNull('endorsements')
+                            ->whereRaw("jsonb_array_length(endorsements::jsonb) > 0");
+                    });
+            })
             ->orderBy('last_name')
             ->get();
     }
