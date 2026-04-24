@@ -87,6 +87,11 @@ class Driver extends Model
         return $this->hasMany(Trip::class);
     }
 
+    public function drugAlcoholTests(): HasMany
+    {
+        return $this->hasMany(DrugAlcoholTest::class);
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

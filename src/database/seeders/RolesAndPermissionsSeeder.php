@@ -13,7 +13,7 @@ class RolesAndPermissionsSeeder extends Seeder
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
-        $resources = ['vehicle', 'driver', 'student', 'trip', 'trip_request', 'trip_reservation', 'maintenance', 'inspection', 'inspection_template', 'pre_trip_inspection', 'post_trip_inspection', 'registration', 'route', 'fuel_log', 'ridership', 'user', 'role'];
+        $resources = ['vehicle', 'driver', 'student', 'trip', 'trip_request', 'trip_reservation', 'maintenance', 'inspection', 'inspection_template', 'pre_trip_inspection', 'post_trip_inspection', 'registration', 'route', 'fuel_log', 'ridership', 'drug_alcohol_test', 'user', 'role'];
         $abilities = ['view_any', 'view', 'create', 'update', 'delete', 'restore', 'force_delete'];
 
         foreach ($resources as $resource) {
@@ -80,6 +80,13 @@ class RolesAndPermissionsSeeder extends Seeder
             ])->get()
         );
 
-        $viewer->syncPermissions(Permission::where('name', 'like', 'view_%')->get());
+        // Viewer sees all view_% perms EXCEPT confidential drug/alcohol records,
+        // which are limited to super-admin and transportation-director per FMCSA
+        // §382.401 confidentiality requirements.
+        $viewer->syncPermissions(
+            Permission::where('name', 'like', 'view_%')
+                ->where('name', 'not like', '%_drug_alcohol_test')
+                ->get()
+        );
     }
 }
