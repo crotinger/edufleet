@@ -28,6 +28,7 @@ class RolesAndPermissionsSeeder extends Seeder
         Permission::findOrCreate('deny_trip_request');
         Permission::findOrCreate('view_vehicle_availability');
         Permission::findOrCreate('use_route_optimizer');
+        Permission::findOrCreate('view_board_report');
 
         $superAdmin = Role::findOrCreate('super-admin');
         $director   = Role::findOrCreate('transportation-director');
@@ -40,7 +41,7 @@ class RolesAndPermissionsSeeder extends Seeder
 
         $director->syncPermissions(
             Permission::whereNot(fn ($q) => $q->where('name', 'like', '%_user')->orWhere('name', 'like', '%_role'))
-                ->orWhereIn('name', ['view_audit_log', 'approve_trip_request', 'deny_trip_request', 'view_vehicle_availability', 'use_route_optimizer'])
+                ->orWhereIn('name', ['view_audit_log', 'approve_trip_request', 'deny_trip_request', 'view_vehicle_availability', 'use_route_optimizer', 'view_board_report'])
                 ->get()
         );
 
