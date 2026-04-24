@@ -59,6 +59,72 @@ class Attachment extends Model
         ];
     }
 
+    /**
+     * FMCSA Driver Qualification File components (49 CFR §391).
+     * Required components every CDL driver must have on file.
+     *
+     * @return array<string, array{label: string, cite: string, required: bool}>
+     */
+    public static function dqfComponents(): array
+    {
+        return [
+            'application' => [
+                'label' => 'Driver\'s application for employment',
+                'cite' => '49 CFR §391.21',
+                'required' => true,
+            ],
+            'previous_employers' => [
+                'label' => 'Previous-employer safety inquiry',
+                'cite' => '49 CFR §391.23(a)(2)',
+                'required' => true,
+            ],
+            'mvr' => [
+                'label' => 'Motor Vehicle Record (MVR)',
+                'cite' => '49 CFR §391.23(a)(1)',
+                'required' => true,
+            ],
+            'annual_review' => [
+                'label' => 'Annual review of driving record',
+                'cite' => '49 CFR §391.25',
+                'required' => true,
+            ],
+            'violations_cert' => [
+                'label' => 'Annual certification of violations',
+                'cite' => '49 CFR §391.27',
+                'required' => true,
+            ],
+            'road_test' => [
+                'label' => 'Road test certificate (or CDL in lieu)',
+                'cite' => '49 CFR §391.31 / §391.33',
+                'required' => true,
+            ],
+            'medical' => [
+                'label' => 'DOT medical examiner\'s certificate',
+                'cite' => '49 CFR §391.43',
+                'required' => true,
+            ],
+            'drug_alcohol' => [
+                'label' => 'Pre-employment drug & alcohol test',
+                'cite' => '49 CFR §382.301 (retained separately per §382.401)',
+                'required' => false,
+            ],
+            'training' => [
+                'label' => 'ELDT / entry-level driver training',
+                'cite' => '49 CFR §380 Subpart F',
+                'required' => false,
+            ],
+        ];
+    }
+
+    public static function dqfComponentLabels(): array
+    {
+        $out = [];
+        foreach (self::dqfComponents() as $key => $meta) {
+            $out[$key] = $meta['label'];
+        }
+        return $out;
+    }
+
     protected function humanSize(): Attribute
     {
         return Attribute::get(function () {

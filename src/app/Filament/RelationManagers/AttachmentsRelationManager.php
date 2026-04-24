@@ -3,6 +3,7 @@
 namespace App\Filament\RelationManagers;
 
 use App\Models\Attachment;
+use App\Models\Driver;
 use Filament\Actions\Action;
 use Filament\Actions\BulkActionGroup;
 use Filament\Actions\CreateAction;
@@ -56,6 +57,13 @@ class AttachmentsRelationManager extends RelationManager
                     ->options(Attachment::categories())
                     ->native(false),
             ]),
+            Select::make('dqf_component')
+                ->label('Driver Qualification File (DQF) component')
+                ->helperText('Tag if this satisfies an FMCSA 49 CFR §391 Driver Qualification File requirement. Leave blank otherwise.')
+                ->options(Attachment::dqfComponentLabels())
+                ->native(false)
+                ->visible(fn () => $owner instanceof Driver)
+                ->columnSpanFull(),
             Textarea::make('description')->rows(2)->columnSpanFull(),
         ]);
     }
@@ -106,6 +114,13 @@ class AttachmentsRelationManager extends RelationManager
                     ->badge()
                     ->formatStateUsing(fn (?string $state) => $state ? (Attachment::categories()[$state] ?? $state) : '—')
                     ->color('info'),
+                TextColumn::make('dqf_component')
+                    ->label('DQF')
+                    ->badge()
+                    ->color('warning')
+                    ->formatStateUsing(fn (?string $state) => $state ? (Attachment::dqfComponentLabels()[$state] ?? $state) : '—')
+                    ->toggleable(isToggledHiddenByDefault: ! ($this->getOwnerRecord() instanceof Driver))
+                    ->visible(fn () => $this->getOwnerRecord() instanceof Driver),
                 TextColumn::make('uploadedBy.name')->label('Uploaded by')->toggleable(),
                 TextColumn::make('created_at')
                     ->label('Uploaded')

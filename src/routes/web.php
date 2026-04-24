@@ -21,3 +21,9 @@ Route::get('/quicktrip/{vehicle}', QuickTrip::class)
 Route::get('/attachments/{attachment}/download', [AttachmentController::class, 'download'])
     ->middleware(['web', 'auth'])
     ->name('attachments.download');
+
+// DQF binder ZIP — per-driver bundle of every DQF-tagged attachment
+// plus a README manifest. Used for FMCSA audits.
+Route::get('/dqf/{driver}/binder', [AttachmentController::class, 'driverBinder'])
+    ->middleware(['web', 'auth'])
+    ->name('dqf.binder');
