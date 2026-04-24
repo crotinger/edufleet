@@ -23,15 +23,15 @@ class DrugAlcoholTestsTable
     {
         return $table
             ->defaultSort('scheduled_for', 'desc')
-            ->modifyQueryUsing(fn ($q) => $q->with('driver'))
+            ->modifyQueryUsing(fn (Builder $query) => $query->with('driver'))
             ->columns([
                 TextColumn::make('driver')
                     ->formatStateUsing(fn (DrugAlcoholTest $r) => $r->driver
                         ? trim("{$r->driver->last_name}, {$r->driver->first_name}")
                         : '—')
-                    ->searchable(query: fn (Builder $q, string $s) => $q->whereHas('driver', fn ($dq) => $dq
-                        ->where('first_name', 'ilike', "%{$s}%")
-                        ->orWhere('last_name', 'ilike', "%{$s}%"))),
+                    ->searchable(query: fn (Builder $query, string $search) => $query->whereHas('driver', fn (Builder $q) => $q
+                        ->where('first_name', 'ilike', "%{$search}%")
+                        ->orWhere('last_name', 'ilike', "%{$search}%"))),
                 TextColumn::make('test_type')
                     ->badge()
                     ->color(fn (?string $state) => $state === DrugAlcoholTest::TYPE_RANDOM ? 'primary' : 'gray')
@@ -69,11 +69,11 @@ class DrugAlcoholTestsTable
                 Filter::make('open_selections')
                     ->label('Selections awaiting completion')
                     ->toggle()
-                    ->query(fn (Builder $q) => $q->whereNotNull('scheduled_for')->whereNull('completed_on')),
+                    ->query(fn (Builder $query) => $query->whereNotNull('scheduled_for')->whereNull('completed_on')),
                 Filter::make('violations')
                     ->label('Violations only (positive / refusal / adulterated)')
                     ->toggle()
-                    ->query(fn (Builder $q) => $q->whereIn('result', DrugAlcoholTest::violatingResults())),
+                    ->query(fn (Builder $query) => $query->whereIn('result', DrugAlcoholTest::violatingResults())),
                 TrashedFilter::make(),
             ])
             ->recordActions([
