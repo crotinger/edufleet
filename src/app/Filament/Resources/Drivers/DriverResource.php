@@ -49,6 +49,7 @@ class DriverResource extends Resource
     {
         return [
             TripsRelationManager::class,
+            \App\Filament\RelationManagers\AttachmentsRelationManager::class,
         ];
     }
 

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasAttachments;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -12,6 +13,7 @@ use Spatie\Activitylog\Models\Concerns\LogsActivity;
 
 class Vehicle extends Model
 {
+    use HasAttachments;
     use LogsActivity;
     use SoftDeletes;
 

@@ -57,6 +57,7 @@ class VehicleResource extends Resource
             MaintenanceRecordsRelationManager::class,
             InspectionsRelationManager::class,
             RegistrationsRelationManager::class,
+            \App\Filament\RelationManagers\AttachmentsRelationManager::class,
         ];
     }
 
